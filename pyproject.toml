@@ -21,6 +21,12 @@ dev = [
     "pytest-asyncio>=0.23.0",
 ]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    # silence as long as https://github.com/googleapis/python-genai/pull/1939 is not merged
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
+]
+
 [tool.uv]
 package = true
 

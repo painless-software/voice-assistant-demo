@@ -57,7 +57,7 @@ LANGUAGE_PROFILES: dict[str, dict] = {
 }
 
 # Gemini model to use for the Live API
-GEMINI_LIVE_MODEL = "gemini-2.0-flash-live-001"
+GEMINI_LIVE_MODEL = "gemini-live-2.5-flash"
 
 # System instruction injected into every Gemini Live session
 SYSTEM_INSTRUCTION_TEMPLATE = """\
@@ -71,6 +71,8 @@ IMPORTANT RULES:
   or take a message.
 - Never make up information you are not sure about.
 - Today's date and time are available in the conversation context if needed.
+- You have access to a weather tool. If the customer asks about the weather in any \
+  city, use the get_current_weather tool to look it up instead of guessing.
 """
 
 

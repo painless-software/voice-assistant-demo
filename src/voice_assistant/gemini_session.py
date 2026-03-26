@@ -23,6 +23,42 @@ from .config import settings, GEMINI_LIVE_MODEL
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Tool declarations
+# ---------------------------------------------------------------------------
+
+TOOL_GET_WEATHER = types.FunctionDeclaration(
+    name="get_current_weather",
+    description="Get the current weather for a given city.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "city": types.Schema(
+                type=types.Type.STRING,
+                description="City name, e.g. 'Zürich'",
+            ),
+        },
+        required=["city"],
+    ),
+)
+
+LIVE_TOOLS = [types.Tool(function_declarations=[TOOL_GET_WEATHER])]
+
+
+# ---------------------------------------------------------------------------
+# Mock tool implementations (replace with real APIs as needed)
+# ---------------------------------------------------------------------------
+
+
+def _mock_get_weather(city: str) -> dict:
+    """Return fake weather data for demo purposes."""
+    return {
+        "city": city,
+        "temperature_celsius": 18,
+        "condition": "partly cloudy",
+        "humidity_percent": 65,
+    }
+
 
 class GeminiSession:
     """
@@ -67,11 +103,12 @@ class GeminiSession:
             language_code=self._profile["gemini_language_code"],
         )
         return types.LiveConnectConfig(
-            response_modalities=["AUDIO"],
+            response_modalities=[types.Modality.AUDIO],
             speech_config=speech_cfg,
             system_instruction=types.Content(
                 parts=[types.Part(text=settings.system_instruction(self._lang_code))]
             ),
+            tools=LIVE_TOOLS,
         )
 
     # ------------------------------------------------------------------
@@ -139,6 +176,17 @@ class GeminiSession:
             yield chunk
 
     # ------------------------------------------------------------------
+    # Tool execution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _execute_tool(name: str, args: dict) -> dict:
+        """Dispatch a tool call to its mock implementation."""
+        if name == "get_current_weather":
+            return _mock_get_weather(args.get("city", "Unknown"))
+        return {"error": f"Unknown tool: {name}"}
+
+    # ------------------------------------------------------------------
     # Internal receiver loop
     # ------------------------------------------------------------------
 
@@ -148,6 +196,8 @@ class GeminiSession:
                 if response.data:
                     # response.data contains raw PCM audio bytes
                     await self._response_queue.put(response.data)
+                elif response.tool_call:
+                    await self._handle_tool_call(response.tool_call)
                 elif response.text:
                     log.debug("Gemini text: %s", response.text)
         except asyncio.CancelledError:
@@ -156,3 +206,16 @@ class GeminiSession:
             log.error("Gemini receive loop error: %s", exc)
         finally:
             await self._response_queue.put(None)
+
+    async def _handle_tool_call(self, tool_call) -> None:
+        """Execute each function call and send results back to Gemini."""
+        function_responses = []
+        for fc in tool_call.function_calls:
+            log.info("Tool call: %s(%s)", fc.name, fc.args)
+            result = self._execute_tool(fc.name, fc.args)
+            function_responses.append(
+                types.FunctionResponse(name=fc.name, response=result)
+            )
+        await self._session.send_tool_response(
+            function_responses=function_responses,
+        )
