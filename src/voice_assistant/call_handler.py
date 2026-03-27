@@ -31,41 +31,30 @@ async def handle_media_stream(websocket: WebSocket) -> None:
     await websocket.accept()
     log.debug("Twilio Media Stream WebSocket connected")
 
-    stream_sid: str | None = None
     lang_code = settings.default_language
+    call_end_event = asyncio.Event()
 
     async with GeminiSession(lang_code=lang_code) as gemini:
-        # Two concurrent tasks:
-        #   A) receive audio from Twilio → forward to Gemini
-        #   B) receive audio from Gemini → forward to Twilio
-        #
-        # The Twilio side (A) is the authority on call lifetime: it only
-        # exits when the caller hangs up ("stop" event / WebSocket close).
-        # The Gemini side (B) may temporarily run out of audio between
-        # model turns, so we must NOT tear down when it finishes – we
-        # wait for the Twilio side to close first.
         _sid_holder: list = [None]
         twilio_to_gemini_task = asyncio.create_task(
-            _twilio_to_gemini(websocket, gemini, _sid_holder)
+            _twilio_to_gemini(websocket, gemini, _sid_holder, call_end_event)
         )
         gemini_to_twilio_task = asyncio.create_task(
-            _gemini_to_twilio(websocket, gemini, _sid_holder)
+            _gemini_to_twilio(websocket, gemini, _sid_holder, call_end_event)
         )
 
-        # Wait for the Twilio side to finish (caller hung up).
-        try:
-            await twilio_to_gemini_task
-        except Exception as exc:
-            log.error("twilio→gemini task raised: %s", exc)
-        finally:
-            gemini_to_twilio_task.cancel()
+        done, pending = await asyncio.wait(
+            [twilio_to_gemini_task, gemini_to_twilio_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
             try:
-                await gemini_to_twilio_task
+                await task
             except asyncio.CancelledError:
                 pass
-            except Exception as exc:
-                log.error("gemini→twilio task raised: %s", exc)
 
+    await websocket.close()
     log.info("Media stream handler finished [stream_sid=%s]", _sid_holder[0])
 
 
@@ -78,10 +67,15 @@ async def _twilio_to_gemini(
     ws: WebSocket,
     gemini: GeminiSession,
     sid_holder: list,
+    call_end_event: asyncio.Event,
 ) -> None:
     try:
         while True:
-            raw = await ws.receive_text()
+            if call_end_event.is_set():
+                log.info("Call ended by caller request")
+                break
+
+            raw = await asyncio.wait_for(ws.receive_text(), timeout=1.0)
             msg = json.loads(raw)
             event = msg.get("event")
 
@@ -91,9 +85,6 @@ async def _twilio_to_gemini(
             elif event == "start":
                 sid_holder[0] = msg["streamSid"]
                 log.info("Twilio stream started [sid=%s]", sid_holder[0])
-                # Detect language from custom parameters if passed via TwiML
-                custom = msg.get("start", {}).get("customParameters", {})
-                # (language detection from DTMF/IVR can be added here later)
 
             elif event == "media":
                 payload_b64 = msg["media"]["payload"]
@@ -104,6 +95,8 @@ async def _twilio_to_gemini(
                 log.info("Twilio stream stopped")
                 break
 
+    except asyncio.TimeoutError:
+        pass
     except WebSocketDisconnect:
         log.debug("Twilio WebSocket disconnected")
     except Exception as exc:
@@ -119,6 +112,7 @@ async def _gemini_to_twilio(
     ws: WebSocket,
     gemini: GeminiSession,
     sid_holder: list,
+    call_end_event: asyncio.Event,
 ) -> None:
     """Forward Gemini audio to Twilio for the entire call.
 
@@ -135,9 +129,13 @@ async def _gemini_to_twilio(
     try:
         while True:
             async for pcm_24k in gemini.receive_audio():
+                if gemini.call_end_requested:
+                    log.info("Caller indicated no need to continue conversation")
+                    call_end_event.set()
+                    return
+
                 stream_sid = sid_holder[0]
                 if not stream_sid:
-                    # Wait briefly for the start event to populate the SID
                     await asyncio.sleep(0.05)
                     stream_sid = sid_holder[0]
                 if not stream_sid:
@@ -152,7 +150,6 @@ async def _gemini_to_twilio(
                 }
                 await ws.send_text(json.dumps(media_msg))
 
-                # Send a mark so we know when playback finishes
                 mark_msg = {
                     "event": "mark",
                     "streamSid": stream_sid,
@@ -160,8 +157,11 @@ async def _gemini_to_twilio(
                 }
                 await ws.send_text(json.dumps(mark_msg))
 
-            # receive_audio() returned (None sentinel) – the Gemini
-            # receive loop may have restarted.  Keep waiting.
+            if gemini.call_end_requested:
+                log.info("Caller indicated no need to continue conversation")
+                call_end_event.set()
+                break
+
             log.debug("Gemini audio stream paused, re-entering receive loop")
 
     except asyncio.CancelledError:

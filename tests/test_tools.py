@@ -136,8 +136,8 @@ async def test_handle_tool_call_sends_response():
     session = GeminiSession.__new__(GeminiSession)
     session._session = AsyncMock()
 
-    # Build a fake tool_call with one function call
     fc = MagicMock()
+    fc.id = "call_123"
     fc.name = "get_current_weather"
     fc.args = {"city": "Lausanne"}
 
@@ -150,6 +150,7 @@ async def test_handle_tool_call_sends_response():
     call_kwargs = session._session.send_tool_response.call_args
     responses = call_kwargs.kwargs["function_responses"]
     assert len(responses) == 1
+    assert responses[0].id == "call_123"
     assert responses[0].name == "get_current_weather"
     assert responses[0].response["city"] == "Lausanne"
 
@@ -161,10 +162,12 @@ async def test_handle_tool_call_multiple_functions():
     session._session = AsyncMock()
 
     fc1 = MagicMock()
+    fc1.id = "call_1"
     fc1.name = "get_current_weather"
     fc1.args = {"city": "Zürich"}
 
     fc2 = MagicMock()
+    fc2.id = "call_2"
     fc2.name = "get_current_weather"
     fc2.args = {"city": "Basel"}
 
@@ -176,7 +179,9 @@ async def test_handle_tool_call_multiple_functions():
     call_kwargs = session._session.send_tool_response.call_args
     responses = call_kwargs.kwargs["function_responses"]
     assert len(responses) == 2
+    assert responses[0].id == "call_1"
     assert responses[0].response["city"] == "Zürich"
+    assert responses[1].id == "call_2"
     assert responses[1].response["city"] == "Basel"
 
 
@@ -311,6 +316,7 @@ async def test_receive_loop_handles_tool_call_mid_conversation():
     audio_after = b"\x02" * 50
 
     fc = MagicMock()
+    fc.id = "call_456"
     fc.name = "get_current_weather"
     fc.args = {"city": "Bern"}
 

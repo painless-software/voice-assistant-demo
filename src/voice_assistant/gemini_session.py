@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator
 
 from google import genai
@@ -22,6 +23,45 @@ from google.genai import types
 from .config import settings, GEMINI_LIVE_MODEL
 
 log = logging.getLogger(__name__)
+
+GOODBYE_PATTERNS = [
+    re.compile(r"\bgoodbye\b", re.IGNORECASE),
+    re.compile(r"\bno\s+need\s+to\s+continue\b", re.IGNORECASE),
+    re.compile(r"\bno\s+need\s+for\b", re.IGNORECASE),
+    re.compile(r"\bthat('s| is) all\b", re.IGNORECASE),
+    re.compile(r"\bthat('s| is) it\b", re.IGNORECASE),
+    re.compile(r"\bthat('s| is) everything\b", re.IGNORECASE),
+    re.compile(r"\bcall\s+you\s+later\b", re.IGNORECASE),
+    re.compile(r"\bsee\s+you\s+(later|again|soon)\b", re.IGNORECASE),
+    re.compile(r"\bhave\s+a\s+(nice|good|great)\s+day\b", re.IGNORECASE),
+    re.compile(r"\bbye\b", re.IGNORECASE),
+    re.compile(r"\bthanks?\s+(for\s+calling|you\s+help)\b", re.IGNORECASE),
+    re.compile(r"\btschüss(i)?\b", re.IGNORECASE),
+    re.compile(r"\btschüß(i)?\b", re.IGNORECASE),
+    re.compile(r"\bauf\s+wieder(s)?hören\b", re.IGNORECASE),
+    re.compile(r"\bad[eéèêë](r)?\b", re.IGNORECASE),
+    re.compile(r"\bciao\b", re.IGNORECASE),
+    re.compile(r"\barrivederci\b", re.IGNORECASE),
+    re.compile(r"\bmerci(\s+(beaucoup|tant))?\b", re.IGNORECASE),
+    re.compile(r"\bdanke(\s+(schön|sehr))?\b", re.IGNORECASE),
+    re.compile(r"\bgracias?\b", re.IGNORECASE),
+    re.compile(r"\ba\s+rever\b", re.IGNORECASE),
+    re.compile(r"\bnão\s+preciso\s+mais\b", re.IGNORECASE),
+    re.compile(r"\bestá\s+bem(\s+assim)?\b", re.IGNORECASE),
+]
+
+
+def _is_goodbye(transcription: str) -> bool:
+    """Return True if the transcription indicates the caller wants to end."""
+    if not transcription:
+        return False
+    cleaned = transcription.strip().rstrip('.,!?;:"').lower()
+    if any(pattern.search(cleaned) for pattern in GOODBYE_PATTERNS):
+        return True
+    if any(pattern.search(transcription.lower()) for pattern in GOODBYE_PATTERNS):
+        return True
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Tool declarations
@@ -79,6 +119,8 @@ class GeminiSession:
         self._session = None
         self._response_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._receiver_task: asyncio.Task | None = None
+        self._last_input_transcription: str = ""
+        self._call_end_requested: bool = False
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -185,6 +227,16 @@ class GeminiSession:
                 return
             yield chunk
 
+    @property
+    def last_input_transcription(self) -> str:
+        """Return the most recent input transcription from the caller."""
+        return self._last_input_transcription
+
+    @property
+    def call_end_requested(self) -> bool:
+        """Return True if the caller has indicated they want to end the call."""
+        return self._call_end_requested
+
     # ------------------------------------------------------------------
     # Tool execution
     # ------------------------------------------------------------------
@@ -235,7 +287,14 @@ class GeminiSession:
                     if response.server_content:
                         sc = response.server_content
                         if sc.input_transcription:
-                            log.debug("User said: %s", sc.input_transcription.text)
+                            self._last_input_transcription = sc.input_transcription.text
+                            log.info("User said: %s", sc.input_transcription.text)
+                            if _is_goodbye(sc.input_transcription.text):
+                                self._call_end_requested = True
+                                log.warning(
+                                    "Caller indicated end of conversation: %s",
+                                    sc.input_transcription.text,
+                                )
                         if sc.output_transcription:
                             log.debug(
                                 "Gemini said: %s",
@@ -268,7 +327,7 @@ class GeminiSession:
             log.debug("Tool call: %s(%s)", fc.name, fc.args)
             result = self._execute_tool(fc.name, fc.args)
             function_responses.append(
-                types.FunctionResponse(name=fc.name, response=result)
+                types.FunctionResponse(id=fc.id, name=fc.name, response=result)
             )
         await self._session.send_tool_response(
             function_responses=function_responses,
