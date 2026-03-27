@@ -1,7 +1,8 @@
-"""Unit tests for Gemini tool declarations and mock implementations."""
+"""Unit tests for Gemini tool declarations, mock implementations, and receive loop."""
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +24,7 @@ from voice_assistant.config import GEMINI_LIVE_MODEL
 # ---------------------------------------------------------------------------
 
 
-def test_model_is_live_2_5_flash():
+def test_model_is_flash_live():
     assert GEMINI_LIVE_MODEL == "gemini-3.1-flash-live-preview"
 
 
@@ -177,3 +178,202 @@ async def test_handle_tool_call_multiple_functions():
     assert len(responses) == 2
     assert responses[0].response["city"] == "Zürich"
     assert responses[1].response["city"] == "Basel"
+
+
+# ---------------------------------------------------------------------------
+# Receive loop – multi-turn behaviour
+# ---------------------------------------------------------------------------
+
+
+def _make_audio_response(data: bytes):
+    """Build a fake Gemini response carrying audio data."""
+    resp = MagicMock()
+    resp.data = data
+    resp.server_content = None
+    resp.tool_call = None
+    resp.text = None
+    return resp
+
+
+def _make_server_content_response(
+    *,
+    audio_data: bytes | None = None,
+    turn_complete: bool = False,
+    interrupted: bool = False,
+    input_text: str | None = None,
+    output_text: str | None = None,
+):
+    """Build a fake Gemini response with server_content fields."""
+    resp = MagicMock()
+    resp.data = None
+    resp.tool_call = None
+    resp.text = None
+
+    sc = MagicMock()
+    sc.interrupted = interrupted
+
+    if audio_data:
+        part = MagicMock()
+        part.inline_data.data = audio_data
+        sc.model_turn.parts = [part]
+    else:
+        sc.model_turn = None
+
+    if input_text:
+        sc.input_transcription.text = input_text
+    else:
+        sc.input_transcription = None
+
+    if output_text:
+        sc.output_transcription.text = output_text
+    else:
+        sc.output_transcription = None
+
+    resp.server_content = sc
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_receive_loop_stays_alive_across_turns():
+    """The receive loop must keep running across multiple model turns.
+
+    The None sentinel should only be pushed when the loop exits (e.g.
+    the async iterator is exhausted), NOT between turns.
+    """
+    session = GeminiSession.__new__(GeminiSession)
+    session._response_queue = asyncio.Queue()
+
+    # Simulate two model turns: greeting + answer to a follow-up
+    turn_1_audio = b"\x00" * 100
+    turn_2_audio = b"\xff" * 100
+
+    async def _turn_1():
+        yield _make_audio_response(turn_1_audio)
+        yield _make_server_content_response(turn_complete=True)
+
+    async def _turn_2():
+        yield _make_audio_response(turn_2_audio)
+        yield _make_server_content_response(turn_complete=True)
+
+    def _empty():
+        return
+
+    mock_session = MagicMock()
+    mock_session.receive.side_effect = [_turn_1(), _turn_2(), _empty()]
+    session._session = mock_session
+
+    await session._receive_loop()
+
+    # Collect everything from the queue
+    chunks = []
+    while not session._response_queue.empty():
+        chunks.append(session._response_queue.get_nowait())
+
+    # Both audio chunks must be present, followed by a single None sentinel
+    assert chunks == [turn_1_audio, turn_2_audio, None]
+
+
+@pytest.mark.asyncio
+async def test_receive_loop_handles_server_content_audio():
+    """Audio delivered via server_content.model_turn.parts should be queued."""
+    session = GeminiSession.__new__(GeminiSession)
+    session._response_queue = asyncio.Queue()
+
+    audio = b"\xab" * 50
+
+    async def _turn():
+        yield _make_server_content_response(audio_data=audio)
+
+    def _empty():
+        return
+
+    mock_session = MagicMock()
+    mock_session.receive.side_effect = [_turn(), _empty()]
+    session._session = mock_session
+
+    await session._receive_loop()
+
+    chunks = []
+    while not session._response_queue.empty():
+        chunks.append(session._response_queue.get_nowait())
+
+    assert chunks == [audio, None]
+
+
+@pytest.mark.asyncio
+async def test_receive_loop_handles_tool_call_mid_conversation():
+    """A tool call between audio turns should be dispatched without
+    breaking the loop."""
+    session = GeminiSession.__new__(GeminiSession)
+    session._response_queue = asyncio.Queue()
+
+    audio_before = b"\x01" * 50
+    audio_after = b"\x02" * 50
+
+    fc = MagicMock()
+    fc.name = "get_current_weather"
+    fc.args = {"city": "Bern"}
+
+    tool_resp = MagicMock()
+    tool_resp.data = None
+    tool_resp.server_content = None
+    tool_resp.text = None
+    tool_resp.tool_call.function_calls = [fc]
+
+    send_tool_response = AsyncMock()
+
+    async def _turn_1():
+        yield _make_audio_response(audio_before)
+        yield tool_resp
+
+    async def _turn_2():
+        yield _make_audio_response(audio_after)
+
+    def _empty():
+        return
+
+    mock_session = MagicMock()
+    mock_session.receive.side_effect = [_turn_1(), _turn_2(), _empty()]
+    mock_session.send_tool_response = send_tool_response
+    session._session = mock_session
+
+    await session._receive_loop()
+
+    chunks = []
+    while not session._response_queue.empty():
+        chunks.append(session._response_queue.get_nowait())
+
+    # Both audio chunks present; tool call handled in-between
+    assert chunks == [audio_before, audio_after, None]
+    send_tool_response.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_receive_loop_sentinel_on_cancellation():
+    """When the loop is cancelled, the None sentinel must still be pushed
+    so that receive_audio() terminates cleanly."""
+    session = GeminiSession.__new__(GeminiSession)
+    session._response_queue = asyncio.Queue()
+
+    async def _slow_receive():
+        yield _make_audio_response(b"\x00" * 10)
+        # Simulate blocking forever (until cancelled)
+        await asyncio.sleep(999)
+
+    mock_session = MagicMock()
+    mock_session.receive.return_value = _slow_receive()
+    session._session = mock_session
+
+    task = asyncio.create_task(session._receive_loop())
+    await asyncio.sleep(0.05)  # let it process the first response
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    chunks = []
+    while not session._response_queue.empty():
+        chunks.append(session._response_queue.get_nowait())
+
+    # Audio chunk + None sentinel
+    assert len(chunks) == 2
+    assert chunks[0] == b"\x00" * 10
+    assert chunks[1] is None

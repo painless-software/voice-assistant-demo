@@ -68,8 +68,8 @@ twilio-list:
 # ── Quality ────────────────────────────────────────────────────────────────────
 
 # Run the test suite
-test:
-    uv run pytest -v
+test *args:
+    uv run pytest {{ args }}
 
 # Type-check with pyright
 typecheck:

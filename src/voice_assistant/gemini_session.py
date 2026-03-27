@@ -120,12 +120,12 @@ class GeminiSession:
 
     async def __aenter__(self) -> "GeminiSession":
         config = self._build_config()
-        log.info(
+        log.debug(
             "Connecting to Gemini Live [model=%s, lang=%s]",
             GEMINI_LIVE_MODEL,
             self._lang_code,
         )
-        log.info("LiveConnectConfig: %s", config)
+        log.debug("LiveConnectConfig: %s", config)
         self._cm = self._client.aio.live.connect(
             model=GEMINI_LIVE_MODEL,
             config=config,
@@ -133,7 +133,8 @@ class GeminiSession:
         try:
             self._session = await self._cm.__aenter__()
         except Exception as exc:
-            log.error("Failed to open Gemini Live session: %s", exc, exc_info=True)
+            log.error("Failed to open Gemini Live session: %s", exc)
+            log.debug("Connection failure details", exc_info=True)
             raise
         log.info("Gemini Live session opened [lang=%s]", self._lang_code)
 
@@ -200,27 +201,71 @@ class GeminiSession:
     # ------------------------------------------------------------------
 
     async def _receive_loop(self) -> None:
+        """Process events from Gemini for the lifetime of the session.
+
+        The SDK's ``receive()`` yields events for **one model turn**
+        and then returns (it breaks internally on ``turn_complete``).
+        We therefore call ``receive()`` in an outer ``while True`` so
+        we keep listening across all turns of the conversation.
+
+        The ``None`` sentinel that signals "no more audio" to
+        :meth:`receive_audio` is only pushed when the loop truly exits
+        (cancellation or fatal error).
+
+        Each event may carry several fields simultaneously (audio data,
+        transcription, turn-complete flag, tool call, …).  We inspect
+        all relevant fields per event rather than using ``elif``.
+        """
         try:
-            async for response in self._session.receive():
-                if response.data:
-                    # response.data contains raw PCM audio bytes
-                    await self._response_queue.put(response.data)
-                elif response.tool_call:
-                    await self._handle_tool_call(response.tool_call)
-                elif response.text:
-                    log.debug("Gemini text: %s", response.text)
+            while True:
+                async for response in self._session.receive():
+                    # -- Audio data (PCM 24 kHz) -----------------
+                    if response.data:
+                        await self._response_queue.put(response.data)
+                    elif response.server_content and response.server_content.model_turn:
+                        for part in response.server_content.model_turn.parts:
+                            if part.inline_data:
+                                await self._response_queue.put(part.inline_data.data)
+
+                    # -- Tool calls ------------------------------
+                    if response.tool_call:
+                        await self._handle_tool_call(response.tool_call)
+
+                    # -- Transcriptions (useful for debugging) ---
+                    if response.server_content:
+                        sc = response.server_content
+                        if sc.input_transcription:
+                            log.debug("User said: %s", sc.input_transcription.text)
+                        if sc.output_transcription:
+                            log.debug(
+                                "Gemini said: %s",
+                                sc.output_transcription.text,
+                            )
+                        if sc.interrupted:
+                            log.debug("Model interrupted by user")
+
+                    # -- Text-only response (fallback) -----------
+                    if response.text:
+                        log.debug("Gemini text: %s", response.text)
+
+                # receive() returned after turn_complete – loop
+                # back to listen for the next turn.
+                log.debug("Model turn complete, waiting for next turn")
+
         except asyncio.CancelledError:
-            pass
+            log.debug("Receive loop cancelled (session closing)")
         except Exception as exc:
-            log.error("Gemini receive loop error: %s", exc, exc_info=True)
+            log.error("Gemini receive loop error: %s", exc)
+            log.debug("Receive loop error details", exc_info=True)
         finally:
+            # Signal the consumer that no more audio will arrive.
             await self._response_queue.put(None)
 
     async def _handle_tool_call(self, tool_call) -> None:
         """Execute each function call and send results back to Gemini."""
         function_responses = []
         for fc in tool_call.function_calls:
-            log.info("Tool call: %s(%s)", fc.name, fc.args)
+            log.debug("Tool call: %s(%s)", fc.name, fc.args)
             result = self._execute_tool(fc.name, fc.args)
             function_responses.append(
                 types.FunctionResponse(name=fc.name, response=result)

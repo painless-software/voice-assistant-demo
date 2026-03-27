@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 async def handle_media_stream(websocket: WebSocket) -> None:
     """Entry-point called by the FastAPI WebSocket route."""
     await websocket.accept()
-    log.info("Twilio Media Stream WebSocket connected")
+    log.debug("Twilio Media Stream WebSocket connected")
 
     stream_sid: str | None = None
     lang_code = settings.default_language
@@ -38,22 +38,33 @@ async def handle_media_stream(websocket: WebSocket) -> None:
         # Two concurrent tasks:
         #   A) receive audio from Twilio → forward to Gemini
         #   B) receive audio from Gemini → forward to Twilio
+        #
+        # The Twilio side (A) is the authority on call lifetime: it only
+        # exits when the caller hangs up ("stop" event / WebSocket close).
+        # The Gemini side (B) may temporarily run out of audio between
+        # model turns, so we must NOT tear down when it finishes – we
+        # wait for the Twilio side to close first.
+        _sid_holder: list = [None]
         twilio_to_gemini_task = asyncio.create_task(
-            _twilio_to_gemini(websocket, gemini, _sid_holder := [None])
+            _twilio_to_gemini(websocket, gemini, _sid_holder)
         )
         gemini_to_twilio_task = asyncio.create_task(
             _gemini_to_twilio(websocket, gemini, _sid_holder)
         )
 
-        done, pending = await asyncio.wait(
-            [twilio_to_gemini_task, gemini_to_twilio_task],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        for task in done:
-            if exc := task.exception():
-                log.error("Task raised: %s", exc)
+        # Wait for the Twilio side to finish (caller hung up).
+        try:
+            await twilio_to_gemini_task
+        except Exception as exc:
+            log.error("twilio→gemini task raised: %s", exc)
+        finally:
+            gemini_to_twilio_task.cancel()
+            try:
+                await gemini_to_twilio_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                log.error("gemini→twilio task raised: %s", exc)
 
     log.info("Media stream handler finished [stream_sid=%s]", _sid_holder[0])
 
@@ -94,7 +105,7 @@ async def _twilio_to_gemini(
                 break
 
     except WebSocketDisconnect:
-        log.info("Twilio WebSocket disconnected")
+        log.debug("Twilio WebSocket disconnected")
     except Exception as exc:
         log.error("Error in twilio→gemini loop: %s", exc)
 
@@ -109,34 +120,53 @@ async def _gemini_to_twilio(
     gemini: GeminiSession,
     sid_holder: list,
 ) -> None:
+    """Forward Gemini audio to Twilio for the entire call.
+
+    ``receive_audio()`` yields audio chunks and returns when the
+    underlying receive loop pushes a ``None`` sentinel (e.g. when the
+    Gemini ``receive()`` iterator exhausts between turns or on
+    reconnect).  We wrap it in an outer ``while True`` so we
+    immediately re-enter and keep waiting for the next model turn
+    rather than exiting and leaving the caller in silence.
+
+    The loop only exits on cancellation (caller hung up) or a fatal
+    Twilio WebSocket error.
+    """
     try:
-        async for pcm_24k in gemini.receive_audio():
-            stream_sid = sid_holder[0]
-            if not stream_sid:
-                # Wait briefly for the start event to populate the SID
-                await asyncio.sleep(0.05)
+        while True:
+            async for pcm_24k in gemini.receive_audio():
                 stream_sid = sid_holder[0]
-            if not stream_sid:
-                log.warning("No stream SID yet, dropping audio chunk")
-                continue
+                if not stream_sid:
+                    # Wait briefly for the start event to populate the SID
+                    await asyncio.sleep(0.05)
+                    stream_sid = sid_holder[0]
+                if not stream_sid:
+                    log.debug("No stream SID yet, dropping audio chunk")
+                    continue
 
-            mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(pcm_24k)
-            media_msg = {
-                "event": "media",
-                "streamSid": stream_sid,
-                "media": {"payload": mulaw_b64},
-            }
-            await ws.send_text(json.dumps(media_msg))
+                mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(pcm_24k)
+                media_msg = {
+                    "event": "media",
+                    "streamSid": stream_sid,
+                    "media": {"payload": mulaw_b64},
+                }
+                await ws.send_text(json.dumps(media_msg))
 
-            # Send a mark so we know when playback finishes (useful later)
-            mark_msg = {
-                "event": "mark",
-                "streamSid": stream_sid,
-                "mark": {"name": "gemini-chunk"},
-            }
-            await ws.send_text(json.dumps(mark_msg))
+                # Send a mark so we know when playback finishes
+                mark_msg = {
+                    "event": "mark",
+                    "streamSid": stream_sid,
+                    "mark": {"name": "gemini-chunk"},
+                }
+                await ws.send_text(json.dumps(mark_msg))
 
+            # receive_audio() returned (None sentinel) – the Gemini
+            # receive loop may have restarted.  Keep waiting.
+            log.debug("Gemini audio stream paused, re-entering receive loop")
+
+    except asyncio.CancelledError:
+        log.debug("gemini→twilio task cancelled (call ending)")
     except WebSocketDisconnect:
-        log.info("Twilio WebSocket disconnected during send")
+        log.debug("Twilio WebSocket disconnected during send")
     except Exception as exc:
         log.error("Error in gemini→twilio loop: %s", exc)
