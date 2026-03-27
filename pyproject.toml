@@ -12,6 +12,7 @@ dependencies = [
     "websockets>=13.0",
     "audioop-lts>=0.2.1",   # mulaw <-> pcm conversion (Python 3.13+ compatible)
     "numpy>=1.26.0",
+    "python-multipart>=0.0.22",
 ]
 
 [project.optional-dependencies]

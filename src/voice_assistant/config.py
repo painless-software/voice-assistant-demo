@@ -18,8 +18,6 @@ load_dotenv()
 LANGUAGE_PROFILES: dict[str, dict] = {
     "de-CH": {
         "display": "Swiss German",
-        "gemini_language_code": "de-CH",
-        # Gemini Live voices that support German well
         "voice_name": "Leda",
         "greeting": (
             "Grüezi! Sie sind mit dem Kundendienst verbunden. "
@@ -30,9 +28,19 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "Könnten Sie das bitte wiederholen?"
         ),
     },
+    "de-DE": {
+        "display": "Standard German",
+        "voice_name": "Leda",
+        "greeting": (
+            "Hallo! Sie sind mit dem Kundendienst verbunden. Wie kann ich Ihnen helfen?"
+        ),
+        "fallback_reply": (
+            "Entschuldigung, ich habe Sie leider nicht verstanden. "
+            "Könnten Sie das bitte wiederholen?"
+        ),
+    },
     "fr-CH": {
         "display": "Swiss French",
-        "gemini_language_code": "fr-FR",  # Gemini uses fr-FR for French
         "voice_name": "Aoede",
         "greeting": (
             "Bonjour! Vous êtes en contact avec notre service clientèle. "
@@ -45,7 +53,6 @@ LANGUAGE_PROFILES: dict[str, dict] = {
     },
     "it-CH": {
         "display": "Swiss Italian",
-        "gemini_language_code": "it-IT",  # Gemini uses it-IT for Italian
         "voice_name": "Zephyr",
         "greeting": (
             "Buongiorno! Benvenuto al servizio clienti. Come posso aiutarla oggi?"
@@ -57,7 +64,7 @@ LANGUAGE_PROFILES: dict[str, dict] = {
 }
 
 # Gemini model to use for the Live API
-GEMINI_LIVE_MODEL = "gemini-live-2.5-flash"
+GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
 
 # System instruction injected into every Gemini Live session
 SYSTEM_INSTRUCTION_TEMPLATE = """\
@@ -65,7 +72,7 @@ You are a friendly and professional customer service representative for a Swiss 
 You are speaking on the phone with a customer.
 
 IMPORTANT RULES:
-- Always respond in {language_display} ({language_code}).
+- RESPOND IN {language_display}. YOU MUST RESPOND UNMISTAKABLY IN {language_display}.
 - Be warm, polite, and concise – this is a phone call, keep answers short.
 - If you cannot answer a question, offer to connect the customer to a specialist \
   or take a message.
@@ -137,10 +144,7 @@ class Settings:
 
     def system_instruction(self, lang_code: str | None = None) -> str:
         profile = self.language_profile(lang_code)
-        return SYSTEM_INSTRUCTION_TEMPLATE.format(
-            language_display=profile["display"],
-            language_code=profile["gemini_language_code"],
-        )
+        return SYSTEM_INSTRUCTION_TEMPLATE.format(language_display=profile["display"])
 
 
 # Singleton – imported everywhere

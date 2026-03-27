@@ -24,7 +24,7 @@ from voice_assistant.config import GEMINI_LIVE_MODEL
 
 
 def test_model_is_live_2_5_flash():
-    assert GEMINI_LIVE_MODEL == "gemini-live-2.5-flash"
+    assert GEMINI_LIVE_MODEL == "gemini-3.1-flash-live-preview"
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +107,6 @@ def test_build_config_includes_tools(mock_settings):
     mock_settings.default_language = "de-CH"
     mock_settings.language_profile.return_value = {
         "voice_name": "Leda",
-        "gemini_language_code": "de-CH",
     }
     mock_settings.system_instruction.return_value = "You are a helpful assistant."
     mock_settings.use_vertex_ai.return_value = False

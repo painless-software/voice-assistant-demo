@@ -94,13 +94,16 @@ class GeminiSession:
         return genai.Client(api_key=settings.google_api_key)
 
     def _build_config(self) -> types.LiveConnectConfig:
+        """
+        Native audio models (gemini-3.1-flash-live-*) handle language
+        switching automatically; language is guided via system instructions.
+        """
         speech_cfg = types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
                     voice_name=self._profile["voice_name"],
                 )
             ),
-            language_code=self._profile["gemini_language_code"],
         )
         return types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
@@ -117,23 +120,29 @@ class GeminiSession:
 
     async def __aenter__(self) -> "GeminiSession":
         config = self._build_config()
+        log.info(
+            "Connecting to Gemini Live [model=%s, lang=%s]",
+            GEMINI_LIVE_MODEL,
+            self._lang_code,
+        )
+        log.info("LiveConnectConfig: %s", config)
         self._cm = self._client.aio.live.connect(
             model=GEMINI_LIVE_MODEL,
             config=config,
         )
-        self._session = await self._cm.__aenter__()
+        try:
+            self._session = await self._cm.__aenter__()
+        except Exception as exc:
+            log.error("Failed to open Gemini Live session: %s", exc, exc_info=True)
+            raise
         log.info("Gemini Live session opened [lang=%s]", self._lang_code)
 
-        # Send greeting as the first model turn so Gemini speaks it aloud
-        greeting = self._profile["greeting"]
-        await self._session.send_client_content(
-            turns=[
-                types.Content(
-                    role="user",
-                    parts=[types.Part(text="[SYSTEM] Greet the customer now.")],
-                )
-            ],
-            turn_complete=True,
+        # Prompt Gemini to speak the greeting aloud.
+        # Native audio models (gemini-3.1-flash-live-*) require
+        # send_realtime_input for all user messages; send_client_content
+        # is only valid for seeding initial context history.
+        await self._session.send_realtime_input(
+            text="[SYSTEM] Greet the customer now.",
         )
 
         # Start background receiver
@@ -203,7 +212,7 @@ class GeminiSession:
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            log.error("Gemini receive loop error: %s", exc)
+            log.error("Gemini receive loop error: %s", exc, exc_info=True)
         finally:
             await self._response_queue.put(None)
 
