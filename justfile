@@ -50,6 +50,11 @@ twilio-set-webhook phone:
 web: clean
     uv run adk web .
 
+# ADK terminal UI (test agent without Twilio)
+[group('dev')]
+repl:
+    uv run adk run voice_assistant
+
 # Start the server locally (no ngrok) – PUBLIC_URL must be set in .env
 [group('dev')]
 serve:
