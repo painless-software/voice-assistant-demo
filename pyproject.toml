@@ -1,25 +1,12 @@
 [project]
 name = "voice-assistant-demo"
 version = "0.1.0"
-description = "Customer support hotline with Twilio + Google Gemini Live API"
+description = "Customer support hotline with Twilio + Google ADK (Gemini Live API)"
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.30.0",
-    "python-dotenv>=1.0.0",
-    "google-genai>=1.0.0",
+    "google-adk>=1.28.0",
     "twilio>=9.0.0",
-    "websockets>=13.0",
     "audioop-lts>=0.2.1",   # mulaw <-> pcm conversion (Python 3.13+ compatible)
-    "numpy>=1.26.0",
-    "python-multipart>=0.0.22",
-]
-
-[project.optional-dependencies]
-dev = [
-    "httpx>=0.27.0",
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
 ]
 
 [tool.pytest.ini_options]
@@ -28,6 +15,9 @@ filterwarnings = [
     "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
 ]
 
+[tool.coverage.report]
+skip_covered = true
+
 [tool.uv]
 package = true
 
@@ -35,6 +25,6 @@ package = true
 
 [dependency-groups]
 dev = [
-    "google-adk>=1.28.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
 ]
-# (add local/git overrides here if needed)

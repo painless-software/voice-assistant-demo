@@ -1,12 +1,11 @@
-#!/usr/bin/env python3
 """
-Twilio provisioning helper.
+Twilio provisioning helpers.
 
-Usage
-─────
-  python scripts/provision_twilio.py --list-numbers
-  python scripts/provision_twilio.py --buy --country CH --webhook https://…/voice
-  python scripts/provision_twilio.py --update-webhook +41XXXXXXXXX https://…/voice
+Usage (via justfile or directly)
+────────────────────────────────
+  python -m voice_assistant.twilio_ops --list-numbers
+  python -m voice_assistant.twilio_ops --buy --country CH --webhook https://…/voice
+  python -m voice_assistant.twilio_ops --update-webhook +41XXXXXXXXX https://…/voice
 
 Requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env or the environment.
 """

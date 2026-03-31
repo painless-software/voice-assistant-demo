@@ -63,8 +63,10 @@ LANGUAGE_PROFILES: dict[str, dict] = {
     },
 }
 
-# Gemini model to use for the Live API
-GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
+# Text/general model (generateContent) – used by ADK web UI and non-live flows
+GEMINI_MODEL = "gemini-2.5-flash"
+# Live-only model (bidiGenerateContent) – used for real-time phone calls
+GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
 
 # System instruction injected into every Gemini Live session
 SYSTEM_INSTRUCTION_TEMPLATE = """\
