@@ -60,7 +60,7 @@ echo "ngrok public URL: ${PUBLIC_URL}"
 
 # Persist PUBLIC_URL in .env
 if grep -q "^PUBLIC_URL=" .env; then
-  sed -i "s|^PUBLIC_URL=.*|PUBLIC_URL=${PUBLIC_URL}|" .env
+  sed -i '' "s|^PUBLIC_URL=.*|PUBLIC_URL=${PUBLIC_URL}|" .env
 else
   echo "PUBLIC_URL=${PUBLIC_URL}" >> .env
 fi

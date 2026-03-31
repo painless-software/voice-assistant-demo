@@ -6,18 +6,16 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
-
 from google.genai import types
 
+from voice_assistant.config import GEMINI_LIVE_MODEL
 from voice_assistant.gemini_session import (
-    GeminiSession,
     LIVE_TOOLS,
     TOOL_GET_WEATHER,
-    _mock_get_weather,
+    GeminiSession,
+    execute_tool,
+    mock_get_weather,
 )
-from voice_assistant.config import GEMINI_LIVE_MODEL
-
 
 # ---------------------------------------------------------------------------
 # Model
@@ -62,16 +60,16 @@ def test_live_tools_contains_weather():
     "city",
     ["Zürich", "Bern", "Genève", "Lugano", ""],
 )
-def test_mock_get_weather_returns_expected_keys(city):
-    result = _mock_get_weather(city)
+def testmock_get_weather_returns_expected_keys(city):
+    result = mock_get_weather(city)
     assert result["city"] == city
     assert "temperature_celsius" in result
     assert "condition" in result
     assert "humidity_percent" in result
 
 
-def test_mock_get_weather_values_are_sensible():
-    result = _mock_get_weather("Zürich")
+def testmock_get_weather_values_are_sensible():
+    result = mock_get_weather("Zürich")
     assert isinstance(result["temperature_celsius"], (int, float))
     assert isinstance(result["humidity_percent"], (int, float))
     assert isinstance(result["condition"], str)
@@ -83,18 +81,18 @@ def test_mock_get_weather_values_are_sensible():
 
 
 def test_execute_tool_routes_weather():
-    result = GeminiSession._execute_tool("get_current_weather", {"city": "Bern"})
+    result = execute_tool("get_current_weather", {"city": "Bern"})
     assert result["city"] == "Bern"
     assert "temperature_celsius" in result
 
 
 def test_execute_tool_unknown_returns_error():
-    result = GeminiSession._execute_tool("nonexistent_tool", {})
+    result = execute_tool("nonexistent_tool", {})
     assert "error" in result
 
 
 def test_execute_tool_weather_missing_city_defaults():
-    result = GeminiSession._execute_tool("get_current_weather", {})
+    result = execute_tool("get_current_weather", {})
     assert result["city"] == "Unknown"
 
 

@@ -51,6 +51,10 @@ twilio-set-webhook phone:
 
 # ── Development ────────────────────────────────────────────────────────────────
 
+# Interactive text REPL – test the agent without Twilio (just needs GOOGLE_API_KEY)
+repl *args:
+    uv run python -m voice_assistant.repl {{ args }}
+
 # Start the server locally (no ngrok) – PUBLIC_URL must be set in .env
 serve:
     uv run python -m voice_assistant

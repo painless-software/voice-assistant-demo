@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+
 from dotenv import load_dotenv
+from google import genai
 
 load_dotenv()
 
@@ -131,15 +133,16 @@ class Settings:
         default_factory=lambda: os.getenv("DEFAULT_LANGUAGE", "de-CH")
     )
 
-    def validate(self) -> None:
+    def validate(self, *, require_twilio: bool = True) -> None:
         """Call on startup to fail early with a clear message if config is missing."""
         missing = []
-        if not self.twilio_account_sid:
-            missing.append("TWILIO_ACCOUNT_SID")
-        if not self.twilio_auth_token:
-            missing.append("TWILIO_AUTH_TOKEN")
-        if not self.twilio_phone_number:
-            missing.append("TWILIO_PHONE_NUMBER")
+        if require_twilio:
+            if not self.twilio_account_sid:
+                missing.append("TWILIO_ACCOUNT_SID")
+            if not self.twilio_auth_token:
+                missing.append("TWILIO_AUTH_TOKEN")
+            if not self.twilio_phone_number:
+                missing.append("TWILIO_PHONE_NUMBER")
         if not self.google_api_key and not self.google_cloud_project:
             missing.append("GOOGLE_API_KEY (or GOOGLE_CLOUD_PROJECT for Vertex AI)")
         if missing:
@@ -164,3 +167,14 @@ class Settings:
 
 # Singleton – imported everywhere
 settings = Settings()
+
+
+def build_genai_client() -> genai.Client:
+    """Build a google-genai Client using the singleton settings."""
+    if settings.use_vertex_ai():
+        return genai.Client(
+            vertexai=True,
+            project=settings.google_cloud_project,
+            location=settings.google_cloud_location,
+        )
+    return genai.Client(api_key=settings.google_api_key)

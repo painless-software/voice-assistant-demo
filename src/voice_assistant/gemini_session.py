@@ -17,10 +17,9 @@ import logging
 import re
 from collections.abc import AsyncIterator
 
-from google import genai
 from google.genai import types
 
-from .config import settings, GEMINI_LIVE_MODEL
+from .config import settings, build_genai_client, GEMINI_LIVE_MODEL
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +89,7 @@ LIVE_TOOLS = [types.Tool(function_declarations=[TOOL_GET_WEATHER])]
 # ---------------------------------------------------------------------------
 
 
-def _mock_get_weather(city: str) -> dict:
+def mock_get_weather(city: str) -> dict:
     """Return fake weather data for demo purposes."""
     return {
         "city": city,
@@ -98,6 +97,13 @@ def _mock_get_weather(city: str) -> dict:
         "condition": "partly cloudy",
         "humidity_percent": 65,
     }
+
+
+def execute_tool(name: str, args: dict) -> dict:
+    """Dispatch a tool call to its implementation."""
+    if name == "get_current_weather":
+        return mock_get_weather(args.get("city", "Unknown"))
+    return {"error": f"Unknown tool: {name}"}
 
 
 class GeminiSession:
@@ -115,7 +121,7 @@ class GeminiSession:
     def __init__(self, lang_code: str | None = None) -> None:
         self._lang_code = lang_code or settings.default_language
         self._profile = settings.language_profile(self._lang_code)
-        self._client = self._build_client()
+        self._client = build_genai_client()
         self._session = None
         self._response_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._receiver_task: asyncio.Task | None = None
@@ -125,15 +131,6 @@ class GeminiSession:
     # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
-
-    def _build_client(self) -> genai.Client:
-        if settings.use_vertex_ai():
-            return genai.Client(
-                vertexai=True,
-                project=settings.google_cloud_project,
-                location=settings.google_cloud_location,
-            )
-        return genai.Client(api_key=settings.google_api_key)
 
     def _build_config(self) -> types.LiveConnectConfig:
         """
@@ -238,17 +235,6 @@ class GeminiSession:
         return self._call_end_requested
 
     # ------------------------------------------------------------------
-    # Tool execution
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _execute_tool(name: str, args: dict) -> dict:
-        """Dispatch a tool call to its mock implementation."""
-        if name == "get_current_weather":
-            return _mock_get_weather(args.get("city", "Unknown"))
-        return {"error": f"Unknown tool: {name}"}
-
-    # ------------------------------------------------------------------
     # Internal receiver loop
     # ------------------------------------------------------------------
 
@@ -325,7 +311,7 @@ class GeminiSession:
         function_responses = []
         for fc in tool_call.function_calls:
             log.debug("Tool call: %s(%s)", fc.name, fc.args)
-            result = self._execute_tool(fc.name, fc.args)
+            result = execute_tool(fc.name, fc.args)
             function_responses.append(
                 types.FunctionResponse(id=fc.id, name=fc.name, response=result)
             )
