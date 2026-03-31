@@ -9,13 +9,9 @@ import pytest
 from google.genai import types
 
 from voice_assistant.config import GEMINI_LIVE_MODEL
-from voice_assistant.gemini_session import (
-    LIVE_TOOLS,
-    TOOL_GET_WEATHER,
-    GeminiSession,
-    execute_tool,
-    mock_get_weather,
-)
+from voice_assistant.gemini_session import LIVE_TOOLS, GeminiSession
+from voice_assistant.tools import registry as tool_registry
+from voice_assistant.tools.weather import get_current_weather
 
 # ---------------------------------------------------------------------------
 # Model
@@ -32,17 +28,23 @@ def test_model_is_flash_live():
 
 
 def test_tool_declaration_name():
-    assert TOOL_GET_WEATHER.name == "get_current_weather"
+    decls = tool_registry.get_declarations()
+    fd = decls[0].function_declarations[0]
+    assert fd.name == "get_current_weather"
 
 
 def test_tool_declaration_has_city_parameter():
-    props = TOOL_GET_WEATHER.parameters.properties
+    decls = tool_registry.get_declarations()
+    fd = decls[0].function_declarations[0]
+    props = fd.parameters.properties
     assert "city" in props
     assert props["city"].type == types.Type.STRING
 
 
 def test_tool_declaration_city_is_required():
-    assert "city" in TOOL_GET_WEATHER.parameters.required
+    decls = tool_registry.get_declarations()
+    fd = decls[0].function_declarations[0]
+    assert "city" in fd.parameters.required
 
 
 def test_live_tools_contains_weather():
@@ -60,16 +62,16 @@ def test_live_tools_contains_weather():
     "city",
     ["Zürich", "Bern", "Genève", "Lugano", ""],
 )
-def testmock_get_weather_returns_expected_keys(city):
-    result = mock_get_weather(city)
+def test_get_weather_returns_expected_keys(city):
+    result = get_current_weather(city)
     assert result["city"] == city
     assert "temperature_celsius" in result
     assert "condition" in result
     assert "humidity_percent" in result
 
 
-def testmock_get_weather_values_are_sensible():
-    result = mock_get_weather("Zürich")
+def test_get_weather_values_are_sensible():
+    result = get_current_weather("Zürich")
     assert isinstance(result["temperature_celsius"], (int, float))
     assert isinstance(result["humidity_percent"], (int, float))
     assert isinstance(result["condition"], str)
@@ -81,18 +83,18 @@ def testmock_get_weather_values_are_sensible():
 
 
 def test_execute_tool_routes_weather():
-    result = execute_tool("get_current_weather", {"city": "Bern"})
+    result = tool_registry.execute("get_current_weather", {"city": "Bern"})
     assert result["city"] == "Bern"
     assert "temperature_celsius" in result
 
 
 def test_execute_tool_unknown_returns_error():
-    result = execute_tool("nonexistent_tool", {})
+    result = tool_registry.execute("nonexistent_tool", {})
     assert "error" in result
 
 
 def test_execute_tool_weather_missing_city_returns_error():
-    result = execute_tool("get_current_weather", {})
+    result = tool_registry.execute("get_current_weather", {})
     assert "error" in result
 
 

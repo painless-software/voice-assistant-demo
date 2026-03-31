@@ -23,7 +23,10 @@ Usage::
 
 from __future__ import annotations
 
+import importlib
+import inspect
 import logging
+import pkgutil
 import time
 from typing import Annotated, Any, Callable, get_type_hints
 
@@ -88,8 +91,6 @@ class ToolRegistry:
         hints = get_type_hints(fn, include_extras=True)
         hints.pop("return", None)
 
-        import inspect
-
         sig = inspect.signature(fn)
         properties: dict[str, types.Schema] = {}
         required: list[str] = []
@@ -138,6 +139,7 @@ class ToolRegistry:
 
         If *tags* is given, only include tools whose tags intersect.
         """
+        _discover_tools()
         decls = [
             t.declaration
             for t in self._tools.values()
@@ -149,18 +151,23 @@ class ToolRegistry:
 
     def execute(self, name: str, args: dict) -> dict:
         """Dispatch a tool call by name. Returns the tool result dict."""
+        _discover_tools()
         registered = self._tools.get(name)
         if registered is None:
             return {"error": f"Unknown tool: {name}"}
 
+        # Filter args to only declared parameters (defense-in-depth)
+        valid_params = set(inspect.signature(registered.handler).parameters)
+        filtered_args = {k: v for k, v in args.items() if k in valid_params}
+
         start = time.monotonic()
         try:
-            result = registered.handler(**args)
+            result = registered.handler(**filtered_args)
             duration_ms = (time.monotonic() - start) * 1000
             log.info(
                 "tool.ok name=%s args=%s duration_ms=%.1f",
                 name,
-                _sanitize_args(args),
+                _sanitize_args(filtered_args),
                 duration_ms,
             )
             return result
@@ -169,11 +176,12 @@ class ToolRegistry:
             log.error(
                 "tool.error name=%s args=%s error=%s duration_ms=%.1f",
                 name,
-                _sanitize_args(args),
+                _sanitize_args(filtered_args),
                 exc,
                 duration_ms,
             )
-            return {"error": f"{type(exc).__name__}: {exc}"}
+            # Return generic message to LLM; technical details stay in logs
+            return {"error": "Tool execution failed. Please try again."}
 
     def names(self) -> list[str]:
         return list(self._tools.keys())
@@ -195,12 +203,18 @@ class _RegisteredTool:
         self.tags = tags
 
 
+_SENSITIVE_KEYS = {"password", "token", "secret", "key", "ssn", "credit_card", "api_key"}
+
+
 def _sanitize_args(args: dict) -> dict:
-    """Return args with long values truncated for logging."""
+    """Return args with sensitive values redacted and long values truncated."""
     sanitized = {}
     for k, v in args.items():
-        s = str(v)
-        sanitized[k] = s[:100] + "..." if len(s) > 100 else s
+        if any(s in k.lower() for s in _SENSITIVE_KEYS):
+            sanitized[k] = "[REDACTED]"
+        else:
+            s = str(v)
+            sanitized[k] = s[:100] + "..." if len(s) > 100 else s
     return sanitized
 
 
@@ -209,6 +223,21 @@ def _sanitize_args(args: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 registry = ToolRegistry()
+
+_discovered = False
+
+
+def _discover_tools() -> None:
+    """Import all tool modules in this package so @tool decorators run."""
+    global _discovered
+    if _discovered:
+        return
+    _discovered = True
+    package_path = __path__
+    for info in pkgutil.iter_modules(package_path):
+        if info.name.startswith("_"):
+            continue
+        importlib.import_module(f"{__name__}.{info.name}")
 
 
 def tool(

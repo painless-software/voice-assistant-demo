@@ -22,14 +22,6 @@ from google.genai import errors as genai_errors, types
 from .config import settings, build_genai_client, LANGUAGE_PROFILES
 from .tools import registry as tool_registry
 
-import voice_assistant.tools.weather  # noqa: F401
-
-LIVE_TOOLS = tool_registry.get_declarations()
-
-
-def execute_tool(name: str, args: dict) -> dict:
-    return tool_registry.execute(name, args)
-
 # Standard (non-live) model for the text REPL
 GEMINI_CHAT_MODEL = "gemini-2.5-flash"
 
@@ -42,7 +34,7 @@ async def send_message(chat, text: str) -> str:
         parts = []
         for fc in response.function_calls:
             print(f"  [tool] {fc.name}({json.dumps(fc.args)})")
-            result = execute_tool(fc.name, fc.args)
+            result = tool_registry.execute(fc.name, fc.args)
             parts.append(
                 types.Part(
                     function_response=types.FunctionResponse(
@@ -66,7 +58,7 @@ async def repl(lang_code: str) -> None:
         model=GEMINI_CHAT_MODEL,
         config=types.GenerateContentConfig(
             system_instruction=settings.system_instruction(lang_code),
-            tools=LIVE_TOOLS,
+            tools=tool_registry.get_declarations(),
         ),
     )
 

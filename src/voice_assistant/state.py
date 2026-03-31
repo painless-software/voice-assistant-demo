@@ -39,6 +39,7 @@ _VALID_TRANSITIONS: set[tuple[Phase, Phase]] = {
     # Escalation fallback
     (Phase.ESCALATION, Phase.CONVERSATION),
     # Error paths
+    (Phase.FAREWELL, Phase.ERROR),
     (Phase.CONNECTING, Phase.ERROR),
     (Phase.CONNECTING, Phase.ENDED),
     (Phase.GREETING, Phase.ERROR),

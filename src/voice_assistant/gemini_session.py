@@ -22,9 +22,6 @@ from google.genai import types
 from .config import settings, build_genai_client, GEMINI_LIVE_MODEL
 from .tools import registry as tool_registry
 
-# Ensure tools are registered by importing the tools package
-import voice_assistant.tools.weather  # noqa: F401
-
 log = logging.getLogger(__name__)
 
 GOODBYE_PATTERNS = [
@@ -71,16 +68,6 @@ def _is_goodbye(transcription: str) -> bool:
 # ---------------------------------------------------------------------------
 
 LIVE_TOOLS = tool_registry.get_declarations()
-
-# Backwards-compatible aliases (used by existing tests and repl.py)
-TOOL_GET_WEATHER = LIVE_TOOLS[0].function_declarations[0] if LIVE_TOOLS else None
-
-from .tools.weather import get_current_weather as mock_get_weather  # noqa: E402
-
-
-def execute_tool(name: str, args: dict) -> dict:
-    """Dispatch a tool call via the registry."""
-    return tool_registry.execute(name, args)
 
 
 class GeminiSession:
@@ -288,7 +275,7 @@ class GeminiSession:
         function_responses = []
         for fc in tool_call.function_calls:
             log.debug("Tool call: %s(%s)", fc.name, fc.args)
-            result = execute_tool(fc.name, fc.args)
+            result = tool_registry.execute(fc.name, fc.args)
             function_responses.append(
                 types.FunctionResponse(id=fc.id, name=fc.name, response=result)
             )
