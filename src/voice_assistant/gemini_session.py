@@ -20,6 +20,10 @@ from collections.abc import AsyncIterator
 from google.genai import types
 
 from .config import settings, build_genai_client, GEMINI_LIVE_MODEL
+from .tools import registry as tool_registry
+
+# Ensure tools are registered by importing the tools package
+import voice_assistant.tools.weather  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -63,47 +67,20 @@ def _is_goodbye(transcription: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Tool declarations
+# Tool declarations & dispatch -- delegated to the tool registry
 # ---------------------------------------------------------------------------
 
-TOOL_GET_WEATHER = types.FunctionDeclaration(
-    name="get_current_weather",
-    description="Get the current weather for a given city.",
-    parameters=types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "city": types.Schema(
-                type=types.Type.STRING,
-                description="City name, e.g. 'Zürich'",
-            ),
-        },
-        required=["city"],
-    ),
-)
+LIVE_TOOLS = tool_registry.get_declarations()
 
-LIVE_TOOLS = [types.Tool(function_declarations=[TOOL_GET_WEATHER])]
+# Backwards-compatible aliases (used by existing tests and repl.py)
+TOOL_GET_WEATHER = LIVE_TOOLS[0].function_declarations[0] if LIVE_TOOLS else None
 
-
-# ---------------------------------------------------------------------------
-# Mock tool implementations (replace with real APIs as needed)
-# ---------------------------------------------------------------------------
-
-
-def mock_get_weather(city: str) -> dict:
-    """Return fake weather data for demo purposes."""
-    return {
-        "city": city,
-        "temperature_celsius": 18,
-        "condition": "partly cloudy",
-        "humidity_percent": 65,
-    }
+from .tools.weather import get_current_weather as mock_get_weather  # noqa: E402
 
 
 def execute_tool(name: str, args: dict) -> dict:
-    """Dispatch a tool call to its implementation."""
-    if name == "get_current_weather":
-        return mock_get_weather(args.get("city", "Unknown"))
-    return {"error": f"Unknown tool: {name}"}
+    """Dispatch a tool call via the registry."""
+    return tool_registry.execute(name, args)
 
 
 class GeminiSession:

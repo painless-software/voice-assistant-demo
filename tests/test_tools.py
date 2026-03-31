@@ -91,9 +91,9 @@ def test_execute_tool_unknown_returns_error():
     assert "error" in result
 
 
-def test_execute_tool_weather_missing_city_defaults():
+def test_execute_tool_weather_missing_city_returns_error():
     result = execute_tool("get_current_weather", {})
-    assert result["city"] == "Unknown"
+    assert "error" in result
 
 
 # ---------------------------------------------------------------------------

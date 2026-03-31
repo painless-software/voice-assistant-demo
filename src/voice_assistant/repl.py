@@ -20,7 +20,15 @@ import sys
 from google.genai import errors as genai_errors, types
 
 from .config import settings, build_genai_client, LANGUAGE_PROFILES
-from .gemini_session import LIVE_TOOLS, execute_tool
+from .tools import registry as tool_registry
+
+import voice_assistant.tools.weather  # noqa: F401
+
+LIVE_TOOLS = tool_registry.get_declarations()
+
+
+def execute_tool(name: str, args: dict) -> dict:
+    return tool_registry.execute(name, args)
 
 # Standard (non-live) model for the text REPL
 GEMINI_CHAT_MODEL = "gemini-2.5-flash"
