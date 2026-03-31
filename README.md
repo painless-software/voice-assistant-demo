@@ -1,4 +1,3 @@
-
 # Customer Service Demo
 
 A voice chat based on Twilio telephony infrastructure and a conversational interface
@@ -119,11 +118,11 @@ language you set as `DEFAULT_LANGUAGE`) and you can have a conversation.
 
 ## Languages
 
-| Code | Language | Gemini voice |
-|------|----------|-------------|
-| `de-CH` | Swiss German | Leda |
-| `fr-CH` | Swiss French | Aoede |
-| `it-CH` | Swiss Italian | Zephyr |
+| Code    | Language | Gemini voice |
+|---------|----------|--------------|
+| `de-CH` | Swiss German  | Leda    |
+| `fr-CH` | Swiss French  | Aoede   |
+| `it-CH` | Swiss Italian | Zephyr  |
 
 Change `DEFAULT_LANGUAGE` in `.env` to switch the default.
 Future work: detect the caller's preferred language via a DTMF IVR menu and
@@ -133,14 +132,14 @@ pass it as a custom parameter in the TwiML.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/voice` | Twilio webhook – returns TwiML |
-| `WS` | `/ws/media-stream` | Twilio Media Stream WebSocket |
-| `GET` | `/docs` | Swagger UI |
+| `GET`  | `/health` | Health check |
+| `POST` | `/voice`  | Twilio webhook – returns TwiML |
+| `WS`   | `/ws/media-stream` | Twilio Media Stream WebSocket |
+| `GET`  | `/docs`   | Swagger UI |
 
 ## Roadmap (next steps)
 
-- [ ] IVR language selection menu (press 1 for German, 2 for French, 3 for Italian)
+- [ ] Provide endpoints for supported countries (de, at, ch, it, li) using the country's main language to greet
 - [ ] RAG: upload product PDFs → vector store → Gemini function calling
 - [ ] Calendar integration: check free slots and book appointments via Google Calendar API
 - [ ] Call recording and transcript logging

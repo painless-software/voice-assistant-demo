@@ -32,4 +32,9 @@ filterwarnings = [
 package = true
 
 [tool.uv.sources]
+
+[dependency-groups]
+dev = [
+    "google-adk>=1.28.0",
+]
 # (add local/git overrides here if needed)
