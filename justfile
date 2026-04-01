@@ -51,7 +51,22 @@ twilio-set-webhook phone:
 
 # ── Development ────────────────────────────────────────────────────────────────
 
-# Interactive text REPL – test the agent without Twilio (just needs GOOGLE_API_KEY)
+# ADK interactive text REPL (just needs GOOGLE_API_KEY)
+[group('dev')]
+adk-run:
+    uv run adk run voice_assistant
+
+# ADK browser dev UI at http://localhost:8000
+[group('dev')]
+adk-web:
+    uv run adk web --port 8000
+
+# Run ADK evaluation tests
+[group('dev')]
+adk-eval:
+    uv run adk eval voice_assistant tests/evals/
+
+# Legacy text REPL (uses custom code, will be removed after full ADK migration)
 repl *args:
     uv run python -m voice_assistant.repl {{ args }}
 

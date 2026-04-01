@@ -10,9 +10,10 @@ dependencies = [
     "google-genai>=1.0.0",
     "twilio>=9.0.0",
     "websockets>=13.0",
-    "audioop-lts>=0.2.1",   # mulaw <-> pcm conversion (Python 3.13+ compatible)
+    "audioop-lts>=0.2.1", # mulaw <-> pcm conversion (Python 3.13+ compatible)
     "numpy>=1.26.0",
     "python-multipart>=0.0.22",
+    "google-adk>=1.28.0",
 ]
 
 [project.optional-dependencies]

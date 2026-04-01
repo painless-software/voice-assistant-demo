@@ -147,6 +147,15 @@ class Settings:
 settings = Settings()
 
 
+def build_instruction(lang_code: str | None = None) -> str:
+    """Compose the full system instruction for a given language.
+
+    This is the ADK-compatible replacement for Settings.system_instruction().
+    Can be used as a plain function or as an ADK instruction provider.
+    """
+    return settings.system_instruction(lang_code)
+
+
 def build_genai_client() -> genai.Client:
     """Build a google-genai Client using the singleton settings."""
     if settings.use_vertex_ai():
