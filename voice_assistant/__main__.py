@@ -1,15 +1,14 @@
-"""
-Entry-point: python -m voice_assistant
-"""
+"""Entry-point: python -m voice_assistant"""
 
 import logging
+
 import uvicorn
 
 from .config import settings
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s – %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
 
 

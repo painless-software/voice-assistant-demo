@@ -28,6 +28,7 @@ voice-assistant-demo/
 │   ├── gemini_session.py # Gemini Live API session wrapper
 │   ├── audio.py          # mulaw/PCM format conversion utilities
 │   └── config.py         # Settings loaded from .env
+│   ├── repl.py           # Interactive text REPL for local testing
 ├── scripts/
 │   └── provision_twilio.py  # Buy / configure Twilio phone number
 ├── pyproject.toml
@@ -95,7 +96,19 @@ just twilio-set-webhook +41XXXXXXXXX
 > If none are found, try `country=US` for testing, or buy a number manually
 > in the [Twilio Console](https://console.twilio.com) and use `twilio-set-webhook`.
 
-### 5. Start the server
+### 5. Test locally (no Twilio needed)
+
+```bash
+just repl                  # text chat with the agent (default language)
+just repl --lang fr-CH     # test in French
+just repl --verbose        # enable debug logging
+```
+
+The REPL connects to Gemini with the same system prompt and tools as the
+voice flow — useful for iterating on agent behaviour without needing a
+phone call.  Only requires `GOOGLE_API_KEY` in `.env`.
+
+### 6. Start the server
 
 ```bash
 just dev     # starts ngrok + FastAPI server (full dev flow)
@@ -112,7 +125,7 @@ To start without ngrok (when `PUBLIC_URL` is already set in `.env`):
 just serve
 ```
 
-### 6. Test it
+### 7. Test it
 
 Call your Twilio phone number. Gemini will greet you in Swiss German (or whichever
 language you set as `DEFAULT_LANGUAGE`) and you can have a conversation.
