@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
-from google import genai
 
 load_dotenv()
 
@@ -68,8 +67,10 @@ LANGUAGE_PROFILES: dict[str, dict] = {
     },
 }
 
-# Gemini model to use for the Live API
-GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
+# Text/general model (generateContent) -- used by ADK web UI and non-live flows
+GEMINI_MODEL = "gemini-2.5-flash"
+# Live-only model (bidiGenerateContent) -- used for real-time phone calls
+GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
 
 # System instruction injected into every Gemini Live session.
 # Loaded from prompts/ text files and composed at runtime.
@@ -156,12 +157,3 @@ def build_instruction(lang_code: str | None = None) -> str:
     return settings.system_instruction(lang_code)
 
 
-def build_genai_client() -> genai.Client:
-    """Build a google-genai Client using the singleton settings."""
-    if settings.use_vertex_ai():
-        return genai.Client(
-            vertexai=True,
-            project=settings.google_cloud_project,
-            location=settings.google_cloud_location,
-        )
-    return genai.Client(api_key=settings.google_api_key)

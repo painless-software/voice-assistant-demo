@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from voice_assistant.agent import _instruction_provider, root_agent
+from voice_assistant.agent import _DualModelGemini, _instruction_provider, root_agent
+from voice_assistant.config import GEMINI_MODEL, GEMINI_LIVE_MODEL
 
 
 # ---------------------------------------------------------------------------
@@ -30,8 +31,16 @@ def test_root_agent_has_instruction():
     assert root_agent.instruction is not None
 
 
-def test_root_agent_model():
-    assert "gemini" in str(root_agent.model).lower()
+def test_root_agent_text_model():
+    assert root_agent.model.model == GEMINI_MODEL
+
+
+def test_root_agent_live_model():
+    assert root_agent.model.live_model == GEMINI_LIVE_MODEL
+
+
+def test_dual_model_is_gemini_subclass():
+    assert isinstance(root_agent.model, _DualModelGemini)
 
 
 # ---------------------------------------------------------------------------
