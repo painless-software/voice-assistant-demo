@@ -1,16 +1,18 @@
 """
-FastAPI application – HTTP + WebSocket endpoints.
+FastAPI application -- HTTP + WebSocket endpoints.
 
 Endpoints
-─────────
-  POST /voice          Twilio webhook – returns TwiML that opens the Media Stream
-  GET  /health         Health check
-  WS   /ws/media-stream  Twilio sends real-time audio here
+---------
+  POST /voice           Twilio webhook -- returns TwiML that opens the Media Stream
+  GET  /health          Health check
+  WS   /ws/media-stream Twilio sends real-time audio here
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import FastAPI, Request, WebSocket
@@ -21,17 +23,19 @@ from .config import settings
 
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="Voice Assistant Demo", version="0.1.0")
 
-
-@app.on_event("startup")
-async def _startup() -> None:
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings.validate()
     log.info(
         "Voice Assistant started | default_lang=%s | public_url=%s",
         settings.default_language,
         settings.public_url or "(not set)",
     )
+    yield
+
+
+app = FastAPI(title="Voice Assistant Demo", version="0.1.0", lifespan=_lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +49,7 @@ async def health() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Twilio voice webhook  →  TwiML response
+# Twilio voice webhook -> TwiML response
 # ---------------------------------------------------------------------------
 
 

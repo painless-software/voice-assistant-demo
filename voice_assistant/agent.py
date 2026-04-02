@@ -29,9 +29,13 @@ class _DualModelGemini(Gemini):
     async def connect(
         self, llm_request: LlmRequest
     ) -> AsyncGenerator[BaseLlmConnection]:
+        original_model = llm_request.model
         llm_request.model = self.live_model
-        async with super().connect(llm_request) as conn:
-            yield conn
+        try:
+            async with super().connect(llm_request) as conn:
+                yield conn
+        finally:
+            llm_request.model = original_model
 
 
 def _instruction_provider(ctx: ReadonlyContext) -> str:
