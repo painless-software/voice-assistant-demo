@@ -5,8 +5,6 @@ from __future__ import annotations
 import audioop
 import base64
 
-import pytest
-
 from voice_assistant.audio import (
     gemini_pcm_to_twilio_mulaw_b64,
     twilio_mulaw_to_gemini_pcm,

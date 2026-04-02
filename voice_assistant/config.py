@@ -155,5 +155,3 @@ def build_instruction(lang_code: str | None = None) -> str:
     Can be used as a plain function or as an ADK instruction provider.
     """
     return settings.system_instruction(lang_code)
-
-
