@@ -9,7 +9,7 @@
         let pkgs = nixpkgs.legacyPackages.${system};
         in {
           default = pkgs.mkShell {
-            packages = [ pkgs.google-cloud-sdk pkgs.uv ];
+            packages = with pkgs; [ gh google-cloud-sdk uv ];
             shellHook = ''
               uv python install 3.14 --quiet
               uv tool install rust-just --quiet
