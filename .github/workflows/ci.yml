@@ -27,3 +27,46 @@ jobs:
     - uses: taiki-e/install-action@just
     - run: mv .env.example .env
     - run: just ${{ matrix.recipe }}
+
+  docker:
+    name: Docker build & smoke test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - run: docker build -t voice-assistant .
+    - name: Smoke test /health endpoint
+      run: |
+        docker run -d --name va -p 8080:8080 \
+          -e TWILIO_ACCOUNT_SID=test \
+          -e TWILIO_AUTH_TOKEN=test \
+          -e TWILIO_PHONE_NUMBER=+10000000000 \
+          -e GOOGLE_API_KEY=test \
+          voice-assistant
+        for i in $(seq 1 10); do
+          if curl -sf http://localhost:8080/health; then exit 0; fi
+          sleep 1
+        done
+        docker logs va
+        exit 1
+
+  deploy:
+    name: Deploy to Cloud Run
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+    - ci
+    - docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: production
+    steps:
+    - uses: actions/checkout@v6
+    - uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+    - uses: google-github-actions/setup-gcloud@v2
+    - uses: taiki-e/install-action@just
+    - run: mv .env.example .env
+    - run: just deploy
