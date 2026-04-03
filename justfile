@@ -3,7 +3,7 @@
 # Requires: uv, just, ngrok (for dev)
 
 set dotenv-load := true
-set shell := ["bash", "-euo", "pipefail", "-c"]
+set dotenv-required := true
 
 port := env("PORT", "8080")
 
@@ -15,50 +15,35 @@ port := env("PORT", "8080")
 
 # ── Setup ──────────────────────────────────────────────────────────────────────
 
-# Copy .env.example -> .env (skip if .env already exists)
-[group('setup')]
-init-env:
-    @if [ -f .env ]; then \
-        echo ".env already exists – skipping"; \
-    else \
-        cp .env.example .env; \
-        echo "Created .env from .env.example – fill in your secrets before running."; \
-    fi
-
 # List all Twilio phone numbers on your account
 [group('setup')]
 twilio-list:
-    uv run python -m voice_assistant.twilio_ops --list-numbers
+    uv run python -m voice_assistant.dev.twilio --list-numbers
 
 # Buy a new Twilio phone number (PUBLIC_URL must be set in .env)
 [group('setup')]
 twilio-buy country="CH":
-    uv run python -m voice_assistant.twilio_ops --buy \
+    uv run python -m voice_assistant.dev.twilio --buy \
         --country {{ country }} \
         --webhook "${PUBLIC_URL}/voice"
 
 # Update the voice webhook on an existing Twilio number
 [group('setup')]
 twilio-set-webhook phone:
-    uv run python -m voice_assistant.twilio_ops \
+    uv run python -m voice_assistant.dev.twilio \
         --update-webhook {{ phone }} "${PUBLIC_URL}/voice"
 
 # ── Development ────────────────────────────────────────────────────────────────
 
 # ADK web UI (test agent without Twilio)
 [group('dev')]
-web:
+adk: clean
     uv run adk web .
 
 # ADK terminal REPL (test agent without Twilio)
 [group('dev')]
 repl:
     uv run adk run voice_assistant
-
-# Run ADK evaluation tests
-[group('dev')]
-eval:
-    uv run adk eval voice_assistant tests/evals/
 
 # Start the server locally (no ngrok) -- PUBLIC_URL must be set in .env
 [group('dev')]
@@ -68,74 +53,49 @@ serve:
 # Start ngrok tunnel + server (full dev flow)
 [group('dev')]
 dev:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    PORT="${PORT:-{{ port }}}"
+    uv run python -m voice_assistant.dev.ngrok
 
-    if ! command -v ngrok &>/dev/null; then
-      echo "ERROR: ngrok not found. Install it from https://ngrok.com/download"
-      exit 1
-    fi
+# ── Testing ────────────────────────────────────────────────────────────────────
 
-    pkill -f "ngrok http ${PORT}" 2>/dev/null || true
-    sleep 1
+# Run the test suite
+[group('testing')]
+test: pytest eval
 
-    echo "Starting ngrok on port ${PORT}..."
-    ngrok http "${PORT}" --log=stdout > /tmp/ngrok.log 2>&1 &
-    NGROK_PID=$!
+# Run unit tests with coverage
+[group('testing')]
+pytest *args:
+    uv run pytest --cov {{ args }}
 
-    PUBLIC_URL=""
-    for i in $(seq 1 20); do
-      PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null \
-        | python3 -c \
-            "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" \
-            2>/dev/null || true)
-      if [[ "$PUBLIC_URL" == https://* ]]; then break; fi
-      sleep 1
-    done
-
-    if [[ -z "$PUBLIC_URL" ]]; then
-      echo "ERROR: Could not determine ngrok public URL. Check /tmp/ngrok.log"
-      kill $NGROK_PID 2>/dev/null || true
-      exit 1
-    fi
-
-    echo "ngrok public URL: ${PUBLIC_URL}"
-
-    if grep -q "^PUBLIC_URL=" .env; then
-      sed -i '' "s|^PUBLIC_URL=.*|PUBLIC_URL=${PUBLIC_URL}|" .env
-    else
-      echo "PUBLIC_URL=${PUBLIC_URL}" >> .env
-    fi
-
-    echo ""
-    echo "  Webhook URL:    ${PUBLIC_URL}/voice"
-    echo "  WebSocket URL:  wss://$(echo "$PUBLIC_URL" | sed 's|https://||')/ws/media-stream"
-    echo ""
-
-    trap "kill $NGROK_PID 2>/dev/null; echo 'Stopped.'" EXIT INT TERM
-    PUBLIC_URL="${PUBLIC_URL}" uv run python -m voice_assistant
+# Run ADK evaluation tests
+[group('testing')]
+[env("PYTHONWARNINGS", "ignore::UserWarning")]
+eval:
+    uv run adk eval voice_assistant tests/evals/*.evalset.json
 
 # ── Quality ────────────────────────────────────────────────────────────────────
 
-# Run the test suite
+# Run all checks (lint, types)
 [group('quality')]
-test *args:
-    uv run pytest {{ args }}
+check: lint types
 
 # Type-check with pyright
 [group('quality')]
-typecheck:
+types:
     uv run pyright voice_assistant/
 
 # Lint + format check with ruff
 [group('quality')]
 lint:
-    uv run ruff check voice_assistant/
-    uv run ruff format --check voice_assistant/
+    uvx ruff check voice_assistant/
+    uvx ruff format --check voice_assistant/
 
 # Auto-fix lint issues and format in place
 [group('quality')]
 fmt:
-    uv run ruff check --fix voice_assistant/
-    uv run ruff format voice_assistant/
+    uvx ruff check --fix voice_assistant/
+    uvx ruff format voice_assistant/
+
+# Clean up Python bytecode, test and build artifacts
+[group('lifecycle')]
+clean *args:
+    uvx pyclean . -d all {{ args }}
