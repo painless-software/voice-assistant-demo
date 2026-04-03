@@ -33,6 +33,19 @@ twilio-set-webhook phone:
     uv run python -m voice_assistant.dev.twilio \
         --update-webhook {{ phone }} "${PUBLIC_URL}/voice"
 
+# Push .env secrets to Google Cloud Secret Manager
+[group('setup')]
+[confirm("This will create/update secrets in Google Cloud Secret Manager. Continue?")]
+gcloud-secrets:
+    echo "${TWILIO_ACCOUNT_SID}" | gcloud secrets create TWILIO_ACCOUNT_SID --data-file=- 2>/dev/null || \
+        echo "${TWILIO_ACCOUNT_SID}" | gcloud secrets versions add TWILIO_ACCOUNT_SID --data-file=-
+    echo "${TWILIO_AUTH_TOKEN}" | gcloud secrets create TWILIO_AUTH_TOKEN --data-file=- 2>/dev/null || \
+        echo "${TWILIO_AUTH_TOKEN}" | gcloud secrets versions add TWILIO_AUTH_TOKEN --data-file=-
+    echo "${TWILIO_PHONE_NUMBER}" | gcloud secrets create TWILIO_PHONE_NUMBER --data-file=- 2>/dev/null || \
+        echo "${TWILIO_PHONE_NUMBER}" | gcloud secrets versions add TWILIO_PHONE_NUMBER --data-file=-
+    echo "${GOOGLE_API_KEY}" | gcloud secrets create GOOGLE_API_KEY --data-file=- 2>/dev/null || \
+        echo "${GOOGLE_API_KEY}" | gcloud secrets versions add GOOGLE_API_KEY --data-file=-
+
 # ── Development ────────────────────────────────────────────────────────────────
 
 # ADK web UI (test agent without Twilio)
@@ -94,6 +107,20 @@ lint:
 fmt:
     uvx ruff check --fix voice_assistant/
     uvx ruff format voice_assistant/
+
+# ── Deployment ────────────────────────────────────────────────────────────────
+
+# Deploy to Google Cloud Run
+[group('deploy')]
+deploy region="europe-west6":
+    gcloud run deploy voice-assistant \
+        --source . \
+        --region {{ region }} \
+        --allow-unauthenticated \
+        --set-env-vars "DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE}" \
+        --set-secrets "TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
+
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 # Clean up Python bytecode, test and build artifacts
 [group('lifecycle')]
