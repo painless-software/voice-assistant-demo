@@ -3,11 +3,11 @@ Twilio provisioning helper.
 
 Usage
 ─────
-  python scripts/provision_twilio.py --list-numbers
-  python scripts/provision_twilio.py --buy --country CH --webhook https://…/voice
-  python scripts/provision_twilio.py --update-webhook +41XXXXXXXXX https://…/voice
+  just twilio-list
+  just twilio-buy country=CH
+  just twilio-set-webhook +41XXXXXXXXX
 
-Requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env or the environment.
+Requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env.
 """
 
 from __future__ import annotations
