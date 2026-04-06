@@ -75,6 +75,8 @@ gcloud-identity project:
     set -euo pipefail
     repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
     project_number=$(gcloud projects describe "{{ project }}" --format="value(projectNumber)")
+    echo "Enabling required APIs..."
+    gcloud services enable iamcredentials.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com --project="{{ project }}"
     echo "Creating Workload Identity Pool..."
     gcloud iam workload-identity-pools create github-actions \
         --project="{{ project }}" \
@@ -176,6 +178,12 @@ preflight project:
     check test -n "$(gcloud billing projects describe '{{ project }}' --format='value(billingAccountName)' 2>/dev/null)"
     desc="Cloud Run API enabled"
     check gcloud services list --project "{{ project }}" --filter="name:run.googleapis.com" --format="value(name)" --limit=1
+    desc="Cloud Build API enabled"
+    check gcloud services list --project "{{ project }}" --filter="name:cloudbuild.googleapis.com" --format="value(name)" --limit=1
+    desc="Artifact Registry API enabled"
+    check gcloud services list --project "{{ project }}" --filter="name:artifactregistry.googleapis.com" --format="value(name)" --limit=1
+    desc="IAM Credentials API enabled"
+    check gcloud services list --project "{{ project }}" --filter="name:iamcredentials.googleapis.com" --format="value(name)" --limit=1
     desc="Service account exists"
     check gcloud iam service-accounts describe "github-deploy@{{ project }}.iam.gserviceaccount.com" --project="{{ project }}"
     desc="Workload Identity Pool exists"
