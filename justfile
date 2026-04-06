@@ -98,7 +98,7 @@ gcloud-identity project:
     echo "Waiting for service account to propagate..."
     until gcloud iam service-accounts describe "$sa" --project="{{ project }}" &>/dev/null; do sleep 2; done
     echo "Granting IAM roles..."
-    for role in roles/run.admin roles/iam.serviceAccountUser roles/cloudbuild.builds.editor roles/artifactregistry.admin roles/storage.admin; do
+    for role in roles/run.admin roles/iam.serviceAccountUser roles/cloudbuild.builds.editor roles/artifactregistry.admin roles/storage.admin roles/serviceusage.serviceUsageConsumer; do
         gcloud projects add-iam-policy-binding "{{ project }}" \
             --member="serviceAccount:$sa" \
             --role="$role" --quiet
@@ -275,6 +275,7 @@ deploy region="europe-west6":
         --source . \
         --region {{ region }} \
         --allow-unauthenticated \
+        --quiet \
         --set-env-vars "DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE}" \
         --set-secrets "TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
 
