@@ -157,6 +157,9 @@ gcloud-secrets:
     echo "${TWILIO_AUTH_TOKEN}" | gcloud secrets versions add TWILIO_AUTH_TOKEN --data-file=-
     echo "${TWILIO_PHONE_NUMBER}" | gcloud secrets versions add TWILIO_PHONE_NUMBER --data-file=-
     echo "${GOOGLE_API_KEY}" | gcloud secrets versions add GOOGLE_API_KEY --data-file=-
+    gcloud projects add-iam-policy-binding "$(gcloud config get project)" \
+        --member="serviceAccount:$(gcloud projects describe "$(gcloud config get project)" --format="value(projectNumber)")-compute@developer.gserviceaccount.com" \
+        --role="roles/secretmanager.secretAccessor" --quiet
 
 # Configure GitHub Actions environment for Cloud Run deployment
 [group('setup')]
