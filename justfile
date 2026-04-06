@@ -278,6 +278,7 @@ deploy region="europe-west6":
         --source . \
         --region {{ region }} \
         --allow-unauthenticated \
+        --memory 1Gi \
         --quiet \
         --set-env-vars "DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE}" \
         --set-secrets "TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
