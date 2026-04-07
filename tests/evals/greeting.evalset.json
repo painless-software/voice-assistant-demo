@@ -5,7 +5,7 @@
       {
         "query": "Hi there, I have a question.",
         "expected_tool_use": [],
-        "reference": "Hello! How can I help you today?"
+        "reference": "Sali! Wie chan ich Ihne hüt hälfe?"
       }
     ]
   }
