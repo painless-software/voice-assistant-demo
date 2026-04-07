@@ -91,14 +91,12 @@ jobs:
         service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
     - uses: google-github-actions/setup-gcloud@v3
     - uses: astral-sh/setup-uv@v7
-      with:
-        python-version: '3.14'
     - uses: taiki-e/install-action@just
-    - run: mv .env.example .env
     - name: Update Twilio webhook
       run: |
+        touch .env
         export TWILIO_ACCOUNT_SID="$(gcloud secrets versions access latest --secret=TWILIO_ACCOUNT_SID)"
         export TWILIO_AUTH_TOKEN="$(gcloud secrets versions access latest --secret=TWILIO_AUTH_TOKEN)"
         export TWILIO_PHONE_NUMBER="$(gcloud secrets versions access latest --secret=TWILIO_PHONE_NUMBER)"
         export PUBLIC_URL="$(gcloud run services describe voice-assistant --region europe-west6 --format='value(status.url)')"
-        just twilio-set-webhook "$TWILIO_PHONE_NUMBER"
+        just twilio-set-webhook

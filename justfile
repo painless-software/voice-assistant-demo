@@ -18,19 +18,22 @@ port := env("PORT", "8080")
 # List all Twilio phone numbers on your account
 [group('setup')]
 twilio-list:
-    uv run python -m voice_assistant.dev.twilio --list-numbers
+    PYTHONPATH=. uvx --with twilio --with python-dotenv \
+        python -m voice_assistant.dev.twilio --list-numbers
 
 # Buy a new Twilio phone number (PUBLIC_URL must be set in .env)
 [group('setup')]
 twilio-buy country="CH":
-    uv run python -m voice_assistant.dev.twilio --buy \
+    PYTHONPATH=. uvx --with twilio --with python-dotenv \
+        python -m voice_assistant.dev.twilio --buy \
         --country {{ country }} \
         --webhook "${PUBLIC_URL}/voice"
 
 # Update the voice webhook on an existing Twilio number
 [group('setup')]
-twilio-set-webhook phone:
-    uv run python -m voice_assistant.dev.twilio \
+twilio-set-webhook phone=env("TWILIO_PHONE_NUMBER"):
+    PYTHONPATH=. uvx --with twilio --with python-dotenv \
+        python -m voice_assistant.dev.twilio \
         --update-webhook {{ phone }} "${PUBLIC_URL}/voice"
 
 # List, show, or create a Google Cloud project (use --all to list all projects)
@@ -197,6 +200,8 @@ preflight project=env("GCP_PROJECT"):
     check bash -c "gcloud services api-keys list --project '{{ project }}' --filter=\"displayName='Voice Assistant'\" --format='value(uid)' | grep -q ."
     desc="Secret Manager API enabled"
     check gcloud services list --project "{{ project }}" --filter="name:secretmanager.googleapis.com" --format="value(name)" --limit=1
+    desc="Service account has Secret Manager access"
+    check bash -c "gcloud projects get-iam-policy '{{ project }}' --flatten='bindings[].members' --filter='bindings.members:github-deploy@{{ project }}.iam.gserviceaccount.com AND bindings.role:roles/secretmanager.secretAccessor' --format='value(bindings.role)' | grep -q ."
     desc="GitHub environment variables set"
     check bash -c "gh variable list --env production --json name -q '.[].name' | grep -q GCP_WORKLOAD_IDENTITY_PROVIDER"
     echo ""
