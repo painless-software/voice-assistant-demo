@@ -48,6 +48,9 @@ jobs:
         done
         docker logs va
         exit 1
+    - name: Verify dev dependencies are excluded
+      run: |
+        docker run --rm voice-assistant python -c "import pytest" 2>&1 && exit 1 || exit 0
 
   deploy:
     name: Deploy to Cloud Run

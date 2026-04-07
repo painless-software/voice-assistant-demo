@@ -9,6 +9,8 @@ COPY voice_assistant/ voice_assistant/
 
 RUN uv sync --frozen --no-dev
 
+ENV PATH="/app/.venv/bin:$PATH"
+
 EXPOSE 8080
 
-CMD ["uv", "run", "python", "-m", "voice_assistant"]
+CMD ["python", "-m", "voice_assistant"]
