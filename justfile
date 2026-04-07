@@ -33,9 +33,9 @@ twilio-set-webhook phone:
     uv run python -m voice_assistant.dev.twilio \
         --update-webhook {{ phone }} "${PUBLIC_URL}/voice"
 
-# List, show, or create a Google Cloud project
+# List, show, or create a Google Cloud project (use --all to list all projects)
 [group('setup')]
-gcloud-project project="--all":
+gcloud-project project=env("GCP_PROJECT"):
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "{{ project }}" = "--all" ]; then
@@ -70,7 +70,7 @@ gcloud-project project="--all":
 
 # Set up Workload Identity Federation for GitHub Actions
 [group('setup')]
-gcloud-identity project:
+gcloud-identity project=env("GCP_PROJECT"):
     #!/usr/bin/env bash
     set -euo pipefail
     repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
@@ -119,7 +119,7 @@ gcloud-identity project:
 
 # Create a Google API key for the Gemini API
 [group('setup')]
-gcloud-apikey project:
+gcloud-apikey project=env("GCP_PROJECT"):
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Enabling Generative Language API..."
@@ -147,18 +147,18 @@ gcloud-apikey project:
 # Push .env secrets to Google Cloud Secret Manager
 [group('setup')]
 [confirm("This will create/update secrets in Google Cloud Secret Manager. Continue? [y/N]")]
-gcloud-secrets:
-    gcloud services enable secretmanager.googleapis.com
-    gcloud secrets create TWILIO_ACCOUNT_SID 2>/dev/null || true
-    gcloud secrets create TWILIO_AUTH_TOKEN 2>/dev/null || true
-    gcloud secrets create TWILIO_PHONE_NUMBER 2>/dev/null || true
-    gcloud secrets create GOOGLE_API_KEY 2>/dev/null || true
-    echo "${TWILIO_ACCOUNT_SID}" | gcloud secrets versions add TWILIO_ACCOUNT_SID --data-file=-
-    echo "${TWILIO_AUTH_TOKEN}" | gcloud secrets versions add TWILIO_AUTH_TOKEN --data-file=-
-    echo "${TWILIO_PHONE_NUMBER}" | gcloud secrets versions add TWILIO_PHONE_NUMBER --data-file=-
-    echo "${GOOGLE_API_KEY}" | gcloud secrets versions add GOOGLE_API_KEY --data-file=-
-    gcloud projects add-iam-policy-binding "$(gcloud config get project)" \
-        --member="serviceAccount:$(gcloud projects describe "$(gcloud config get project)" --format="value(projectNumber)")-compute@developer.gserviceaccount.com" \
+gcloud-secrets project=env("GCP_PROJECT"):
+    gcloud services enable secretmanager.googleapis.com --project {{ project }}
+    gcloud secrets create TWILIO_ACCOUNT_SID --project {{ project }} 2>/dev/null || true
+    gcloud secrets create TWILIO_AUTH_TOKEN --project {{ project }} 2>/dev/null || true
+    gcloud secrets create TWILIO_PHONE_NUMBER --project {{ project }} 2>/dev/null || true
+    gcloud secrets create GOOGLE_API_KEY --project {{ project }} 2>/dev/null || true
+    echo "${TWILIO_ACCOUNT_SID}" | gcloud secrets versions add TWILIO_ACCOUNT_SID --project {{ project }} --data-file=-
+    echo "${TWILIO_AUTH_TOKEN}" | gcloud secrets versions add TWILIO_AUTH_TOKEN --project {{ project }} --data-file=-
+    echo "${TWILIO_PHONE_NUMBER}" | gcloud secrets versions add TWILIO_PHONE_NUMBER --project {{ project }} --data-file=-
+    echo "${GOOGLE_API_KEY}" | gcloud secrets versions add GOOGLE_API_KEY --project {{ project }} --data-file=-
+    gcloud projects add-iam-policy-binding "{{ project }}" \
+        --member="serviceAccount:$(gcloud projects describe "{{ project }}" --format="value(projectNumber)")-compute@developer.gserviceaccount.com" \
         --role="roles/secretmanager.secretAccessor" --quiet
 
 # Configure GitHub Actions environment for Cloud Run deployment
@@ -171,7 +171,7 @@ github-env provider service_account:
 
 # Verify that Google Cloud and GitHub are set up for deployment
 [group('setup')]
-preflight project:
+preflight project=env("GCP_PROJECT"):
     #!/usr/bin/env bash
     ok=true
     check() { if "$@" &>/dev/null; then echo "✓ $desc"; else echo "✗ $desc"; ok=false; fi; }
