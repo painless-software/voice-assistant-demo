@@ -269,10 +269,10 @@ fmt:
     uvx ruff check --fix voice_assistant/
     uvx ruff format voice_assistant/
 
-# ── Deployment ────────────────────────────────────────────────────────────────
+# ── Operations ────────────────────────────────────────────────────────────────
 
 # Deploy to Google Cloud Run
-[group('deploy')]
+[group('ops')]
 deploy region="europe-west6":
     gcloud run deploy voice-assistant \
         --source . \
@@ -291,6 +291,16 @@ deploy region="europe-west6":
     uv run python -m voice_assistant.dev.twilio \
         --update-webhook "$(gcloud secrets versions access latest --secret=TWILIO_PHONE_NUMBER)" \
         "$(gcloud run services describe voice-assistant --region {{ region }} --format='value(status.url)')/voice"
+
+# List container images in Artifact Registry
+[group('ops')]
+images project=env("GCP_PROJECT"):
+    gcloud artifacts repositories list --project {{ project }}
+
+# Tail Cloud Run logs in real time
+[group('ops')]
+logs project=env("GCP_PROJECT"):
+    gcloud alpha logging tail --project {{ project }}
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 
