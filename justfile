@@ -98,7 +98,7 @@ gcloud-identity project:
     echo "Waiting for service account to propagate..."
     until gcloud iam service-accounts describe "$sa" --project="{{ project }}" &>/dev/null; do sleep 2; done
     echo "Granting IAM roles..."
-    for role in roles/run.admin roles/iam.serviceAccountUser roles/cloudbuild.builds.editor roles/artifactregistry.admin roles/storage.admin roles/serviceusage.serviceUsageConsumer; do
+    for role in roles/run.admin roles/iam.serviceAccountUser roles/cloudbuild.builds.editor roles/artifactregistry.admin roles/storage.admin roles/serviceusage.serviceUsageConsumer roles/secretmanager.secretAccessor; do
         gcloud projects add-iam-policy-binding "{{ project }}" \
             --member="serviceAccount:$sa" \
             --role="$role" --quiet
@@ -282,6 +282,15 @@ deploy region="europe-west6":
         --quiet \
         --set-env-vars "DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE}" \
         --set-secrets "TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
+    gcloud run services update voice-assistant \
+        --region {{ region }} \
+        --update-env-vars "PUBLIC_URL=$(gcloud run services describe voice-assistant --region {{ region }} --format='value(status.url)')" \
+        --quiet
+    TWILIO_ACCOUNT_SID="$(gcloud secrets versions access latest --secret=TWILIO_ACCOUNT_SID)" \
+    TWILIO_AUTH_TOKEN="$(gcloud secrets versions access latest --secret=TWILIO_AUTH_TOKEN)" \
+    uv run python -m voice_assistant.dev.twilio \
+        --update-webhook "$(gcloud secrets versions access latest --secret=TWILIO_PHONE_NUMBER)" \
+        "$(gcloud run services describe voice-assistant --region {{ region }} --format='value(status.url)')/voice"
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 
