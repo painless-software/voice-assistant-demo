@@ -18,22 +18,22 @@ port := env("PORT", "8080")
 # List all Twilio phone numbers on your account
 [group('setup')]
 twilio-list:
-    PYTHONPATH=. uvx --with twilio --with python-dotenv \
-        python -m voice_assistant.dev.twilio --list-numbers
+    PYTHONPATH=voice_assistant/dev uvx --with twilio --with python-dotenv \
+        python -m twilio_helper --list-numbers
 
 # Buy a new Twilio phone number (PUBLIC_URL must be set in .env)
 [group('setup')]
 twilio-buy country="CH":
-    PYTHONPATH=. uvx --with twilio --with python-dotenv \
-        python -m voice_assistant.dev.twilio --buy \
+    PYTHONPATH=voice_assistant/dev uvx --with twilio --with python-dotenv \
+        python -m twilio_helper --buy \
         --country {{ country }} \
         --webhook "${PUBLIC_URL}/voice"
 
 # Update the voice webhook on an existing Twilio number
 [group('setup')]
 twilio-set-webhook phone=env("TWILIO_PHONE_NUMBER"):
-    PYTHONPATH=. uvx --with twilio --with python-dotenv \
-        python -m voice_assistant.dev.twilio \
+    PYTHONPATH=voice_assistant/dev uvx --with twilio --with python-dotenv \
+        python -m twilio_helper \
         --update-webhook {{ phone }} "${PUBLIC_URL}/voice"
 
 # List, show, or create a Google Cloud project (use --all to list all projects)
