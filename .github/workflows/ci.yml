@@ -73,3 +73,32 @@ jobs:
     - uses: taiki-e/install-action@just
     - run: mv .env.example .env
     - run: just deploy
+
+  update-twilio-webhook:
+    name: Update Twilio webhook
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: production
+    steps:
+    - uses: actions/checkout@v6
+    - uses: google-github-actions/auth@v3
+      with:
+        workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+    - uses: google-github-actions/setup-gcloud@v3
+    - uses: astral-sh/setup-uv@v7
+      with:
+        python-version: '3.14'
+    - uses: taiki-e/install-action@just
+    - run: mv .env.example .env
+    - name: Update Twilio webhook
+      run: |
+        export TWILIO_ACCOUNT_SID="$(gcloud secrets versions access latest --secret=TWILIO_ACCOUNT_SID)"
+        export TWILIO_AUTH_TOKEN="$(gcloud secrets versions access latest --secret=TWILIO_AUTH_TOKEN)"
+        export TWILIO_PHONE_NUMBER="$(gcloud secrets versions access latest --secret=TWILIO_PHONE_NUMBER)"
+        export PUBLIC_URL="$(gcloud run services describe voice-assistant --region europe-west6 --format='value(status.url)')"
+        just twilio-set-webhook "$TWILIO_PHONE_NUMBER"

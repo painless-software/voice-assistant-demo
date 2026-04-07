@@ -286,11 +286,6 @@ deploy region="europe-west6":
         --region {{ region }} \
         --update-env-vars "PUBLIC_URL=$(gcloud run services describe voice-assistant --region {{ region }} --format='value(status.url)')" \
         --quiet
-    TWILIO_ACCOUNT_SID="$(gcloud secrets versions access latest --secret=TWILIO_ACCOUNT_SID)" \
-    TWILIO_AUTH_TOKEN="$(gcloud secrets versions access latest --secret=TWILIO_AUTH_TOKEN)" \
-    uv run python -m voice_assistant.dev.twilio \
-        --update-webhook "$(gcloud secrets versions access latest --secret=TWILIO_PHONE_NUMBER)" \
-        "$(gcloud run services describe voice-assistant --region {{ region }} --format='value(status.url)')/voice"
 
 # List container images in Artifact Registry
 [group('ops')]
