@@ -6,6 +6,7 @@ Usage
   just twilio-list
   just twilio-buy country=CH
   just twilio-set-webhook +41XXXXXXXXX
+  just balance
 
 Requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env.
 """
@@ -58,6 +59,23 @@ def buy_number(client: Client, country: str, webhook_url: str) -> None:
     print(f"\nAdd to your .env:\n  TWILIO_PHONE_NUMBER={purchased.phone_number}")
 
 
+def show_balance(client: Client) -> None:
+    balance = client.api.account.balance.fetch()
+    print(f"Balance:        {balance.balance} {balance.currency}")
+
+    records = client.usage.records.this_month.list(category="totalprice")
+    if records:
+        r = records[0]
+        print(
+            f"Month-to-date:  {r.price} {r.price_unit}  ({r.start_date} – {r.end_date})"
+        )
+
+    print(
+        "\nSee details at"
+        " https://console.twilio.com/us1/billing/manage-billing/billing-overview"
+    )
+
+
 def update_webhook(client: Client, phone_number: str, webhook_url: str) -> None:
     matches = client.incoming_phone_numbers.list(phone_number=phone_number)
     if not matches:
@@ -73,6 +91,7 @@ def main() -> None:
     group.add_argument(
         "--list-numbers", action="store_true", help="List existing numbers"
     )
+    group.add_argument("--balance", action="store_true", help="Show account balance")
     group.add_argument("--buy", action="store_true", help="Buy a new phone number")
     group.add_argument(
         "--update-webhook",
@@ -91,6 +110,8 @@ def main() -> None:
 
     if args.list_numbers:
         list_numbers(client)
+    elif args.balance:
+        show_balance(client)
     elif args.buy:
         if not args.webhook:
             sys.exit("--webhook URL is required with --buy")

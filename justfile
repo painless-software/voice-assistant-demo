@@ -274,6 +274,13 @@ fmt:
     uvx ruff check --fix voice_assistant/
     uvx ruff format voice_assistant/
 
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+# Clean up Python bytecode, test and build artifacts
+[group('lifecycle')]
+clean *args:
+    uvx pyclean . -d all {{ args }}
+
 # ── Operations ────────────────────────────────────────────────────────────────
 
 # Deploy to Google Cloud Run
@@ -302,9 +309,13 @@ images project=env("GCP_PROJECT"):
 logs project=env("GCP_PROJECT"):
     gcloud alpha logging tail --project {{ project }}
 
-# ── Lifecycle ─────────────────────────────────────────────────────────────────
-
-# Clean up Python bytecode, test and build artifacts
-[group('lifecycle')]
-clean *args:
-    uvx pyclean . -d all {{ args }}
+# Show Twilio and Google Cloud billing summary
+[group('ops')]
+balance:
+    @echo "── Twilio ──"
+    PYTHONPATH=voice_assistant/dev uvx --with twilio --with python-dotenv \
+        python -m twilio_helper --balance
+    @echo "── Google Cloud ──"
+    gcloud billing budgets list --billing-account ${GCP_BILLING_ACCOUNT}
+    @echo ""
+    @echo "See https://console.cloud.google.com/billing/${GCP_BILLING_ACCOUNT}/reports"
