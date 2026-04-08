@@ -24,7 +24,6 @@ def test_root_agent_name():
 def test_root_agent_has_tools():
     tool_names = [t.__name__ for t in root_agent.tools]
     assert "get_current_weather" in tool_names
-    assert "end_call" in tool_names
 
 
 def test_root_agent_has_instruction():

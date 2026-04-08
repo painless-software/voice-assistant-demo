@@ -67,6 +67,30 @@ LANGUAGE_PROFILES: dict[str, dict] = {
     },
 }
 
+# Common farewell substrings the agent might use, across all supported
+# languages.  Matched case-insensitively against the agent's output
+# transcription to detect that the call is ending.  Keep these broad —
+# the agent is steered by the prompt but may improvise.
+FAREWELL_PHRASES = [
+    # German
+    "wiederhören",
+    "wiedersehen",
+    "tschüss",
+    "tschüs",
+    "ade",
+    # French
+    "au revoir",
+    "à bientôt",
+    "bonne journée",
+    # Italian
+    "arrivederci",
+    "arrivederla",
+    # English (language switching)
+    "goodbye",
+    "bye bye",
+    "bye",
+]
+
 # Text/general model (generateContent) -- used by ADK web UI and non-live flows
 GEMINI_MODEL = "gemini-2.5-flash"
 # Live-only model (bidiGenerateContent) -- used for real-time phone calls
