@@ -78,6 +78,7 @@ FAREWELL_PHRASES = [
     "tschüss",
     "tschüs",
     "ade",
+    "adé",
     # French
     "au revoir",
     "à bientôt",
