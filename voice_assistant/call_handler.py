@@ -238,6 +238,24 @@ async def _adk_to_twilio(
                         log.info("Farewell phrase detected in agent speech — draining")
                         draining = True
 
+            # -- Barge-in: caller interrupted agent mid-utterance --
+            # Gemini Live's server-side VAD sets ``interrupted=True`` on the
+            # event it emits when caller speech is detected during model
+            # output. We flush Twilio's outbound buffer with a ``clear``
+            # event so any audio we already sent but Twilio has not yet
+            # played is discarded, and we drop any audio carried on this
+            # event itself.
+            if getattr(event, "interrupted", None):
+                log.info("Caller interrupted agent — clearing Twilio buffer")
+                stream_sid = sid_holder[0]
+                if stream_sid:
+                    clear_msg = {"event": "clear", "streamSid": stream_sid}
+                    await ws.send_text(json.dumps(clear_msg))
+                if draining:
+                    log.info("Interrupted during goodbye — cancelling drain")
+                    draining = False
+                continue
+
             # -- Audio data --
             has_audio = False
             if event.content and event.content.parts:
