@@ -24,6 +24,7 @@ jobs:
     - uses: astral-sh/setup-uv@v7
       with:
         python-version: '3.14'
+        save-cache: ${{ matrix.recipe == 'lint' }}
     - uses: taiki-e/install-action@just
     - run: mv .env.example .env
     - run: just ${{ matrix.recipe }}
