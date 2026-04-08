@@ -312,10 +312,13 @@ logs project=env("GCP_PROJECT"):
 balance:
     @echo "── Twilio ──"
     uv run --no-project tools/twilio_helper.py --balance
+    @echo ""
     @echo "── Google Cloud ──"
-    gcloud billing budgets list --billing-account ${GCP_BILLING_ACCOUNT}
+    gcloud billing budgets list --billing-account ${GCP_BILLING_ACCOUNT} \
+        --format="table(displayName:label=BILLING_ACCOUNT, amount.specifiedAmount.units:label=BUDGET, amount.specifiedAmount.currencyCode:label=CURRENCY, budgetFilter.calendarPeriod:label=PERIOD, thresholdRules.thresholdPercent.list():label=THRESHOLDS)"
     @echo ""
     @echo "See https://console.cloud.google.com/billing/${GCP_BILLING_ACCOUNT}/reports"
     @echo ""
-    @echo "── Gemini (AI Studio free tier) ──"
+    @echo "── Gemini (AI Studio) ──"
+    @echo "Billed via Google Cloud billing account above."
     @echo "See https://aistudio.google.com/rate-limit?timeRange=last-28-days"

@@ -74,7 +74,7 @@ def show_balance(client: Client) -> None:
     if records:
         r = records[0]
         print(
-            f"Month-to-date:  {r.price} {r.price_unit}  ({r.start_date} – {r.end_date})"
+            f"Month-to-date:  {r.price} {r.price_unit}  ({r.start_date} to {r.end_date})"
         )
 
     print(
