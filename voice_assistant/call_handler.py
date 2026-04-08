@@ -32,6 +32,9 @@ log = logging.getLogger(__name__)
 # Max call duration (seconds) as safety timeout
 MAX_CALL_DURATION = 5 * 60
 
+# Max seconds to wait for Twilio to finish playing the goodbye audio
+GOODBYE_GRACE_PERIOD = 10
+
 
 async def handle_media_stream(websocket: WebSocket) -> None:
     """Entry-point called by the FastAPI WebSocket route."""
@@ -124,7 +127,17 @@ async def _twilio_to_adk(
     try:
         while True:
             if call_end_event.is_set():
-                log.info("Call ended by agent request")
+                # Wait for Twilio to finish playing the goodbye audio.
+                log.info("Call ending — waiting for goodbye playback to finish")
+                try:
+                    await asyncio.wait_for(
+                        _wait_for_goodbye_mark(ws),
+                        timeout=GOODBYE_GRACE_PERIOD,
+                    )
+                except asyncio.TimeoutError:
+                    log.warning(
+                        "Goodbye grace period (%ds) expired", GOODBYE_GRACE_PERIOD
+                    )
                 break
 
             raw = await asyncio.wait_for(ws.receive_text(), timeout=1.0)
@@ -157,6 +170,22 @@ async def _twilio_to_adk(
         log.error("Error in twilio->adk loop: %s", exc)
 
 
+async def _wait_for_goodbye_mark(ws: WebSocket) -> None:
+    """Read Twilio messages until the 'goodbye-done' mark is echoed back."""
+    while True:
+        raw = await ws.receive_text()
+        msg = json.loads(raw)
+        if (
+            msg.get("event") == "mark"
+            and msg.get("mark", {}).get("name") == "goodbye-done"
+        ):
+            log.info("Twilio confirmed goodbye playback complete")
+            return
+        if msg.get("event") == "stop":
+            log.info("Twilio stream stopped while waiting for goodbye mark")
+            return
+
+
 # ---------------------------------------------------------------------------
 # ADK -> Twilio direction
 # ---------------------------------------------------------------------------
@@ -172,6 +201,7 @@ async def _adk_to_twilio(
     sid_holder: list[str | None],
     call_end_event: asyncio.Event,
 ) -> None:
+    draining = False
     try:
         async for event in runner.run_live(
             user_id=user_id,
@@ -183,8 +213,10 @@ async def _adk_to_twilio(
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.function_call and part.function_call.name == "end_call":
-                        log.info("Agent invoked end_call tool")
-                        call_end_event.set()
+                        log.info(
+                            "Agent invoked end_call tool — draining remaining audio"
+                        )
+                        draining = True
 
             # -- Transcription logging --
             if hasattr(event, "input_transcription") and event.input_transcription:
@@ -202,6 +234,7 @@ async def _adk_to_twilio(
                     log.debug("Agent said: %s", event.output_transcription.text)
 
             # -- Audio data --
+            has_audio = False
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.inline_data and part.inline_data.data:
@@ -213,6 +246,7 @@ async def _adk_to_twilio(
                             log.debug("No stream SID yet, dropping audio chunk")
                             continue
 
+                        has_audio = True
                         mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(
                             part.inline_data.data
                         )
@@ -229,6 +263,20 @@ async def _adk_to_twilio(
                             "mark": {"name": "adk-chunk"},
                         }
                         await ws.send_text(json.dumps(mark_msg))
+
+            # Once draining and no more audio in this event, the turn is done.
+            if draining and not has_audio:
+                log.info("Goodbye audio fully sent — sending final mark")
+                stream_sid = sid_holder[0]
+                if stream_sid:
+                    final_mark = {
+                        "event": "mark",
+                        "streamSid": stream_sid,
+                        "mark": {"name": "goodbye-done"},
+                    }
+                    await ws.send_text(json.dumps(final_mark))
+                call_end_event.set()
+                break
 
             if call_end_event.is_set():
                 log.info("Ending ADK stream after end_call")
