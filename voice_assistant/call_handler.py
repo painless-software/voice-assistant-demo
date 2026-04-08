@@ -202,6 +202,7 @@ async def _adk_to_twilio(
     call_end_event: asyncio.Event,
 ) -> None:
     draining = False
+    draining_audio_seen = False
     try:
         async for event in runner.run_live(
             user_id=user_id,
@@ -247,6 +248,8 @@ async def _adk_to_twilio(
                             continue
 
                         has_audio = True
+                        if draining:
+                            draining_audio_seen = True
                         mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(
                             part.inline_data.data
                         )
@@ -264,8 +267,11 @@ async def _adk_to_twilio(
                         }
                         await ws.send_text(json.dumps(mark_msg))
 
-            # Once draining and no more audio in this event, the turn is done.
-            if draining and not has_audio:
+            # Once draining, we've heard goodbye audio, and this event has
+            # none, the turn is done.  Without the audio_seen guard the loop
+            # would break on the very first non-audio event after end_call
+            # (e.g. the function_call event itself).
+            if draining and draining_audio_seen and not has_audio:
                 log.info("Goodbye audio fully sent — sending final mark")
                 stream_sid = sid_holder[0]
                 if stream_sid:
