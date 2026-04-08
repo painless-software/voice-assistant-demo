@@ -13,7 +13,10 @@ excluded from the Docker production image.
 
 ## Dependencies
 
-- **twilio_helper.py** requires `twilio` and `python-dotenv` (provided
-  automatically by `uvx --with` in the justfile recipes).
-- **ngrok.py** requires the [ngrok](https://ngrok.com/download) binary on
-  your `PATH` and the project's own dependencies (run via `uv run`).
+Each script declares its own dependencies via [inline script metadata],
+so `uv run tools/<script>.py` installs them automatically.
+
+**ngrok.py** additionally requires the [ngrok](https://ngrok.com/download)
+binary on your `PATH`. NixOS users can run `nix develop` to get it installed.
+
+[inline script metadata]: https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies

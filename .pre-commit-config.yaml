@@ -17,3 +17,8 @@ repos:
     language: system
     types: [python]
     pass_filenames: false
+  - id: nixfmt
+    name: nixfmt
+    entry: nix run nixpkgs#nixfmt
+    language: system
+    files: flake\.nix

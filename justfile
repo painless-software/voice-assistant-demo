@@ -18,22 +18,19 @@ port := env("PORT", "8080")
 # List all Twilio phone numbers on your account
 [group('setup')]
 twilio-list:
-    PYTHONPATH=tools uvx --with twilio --with python-dotenv \
-        python -m twilio_helper --list-numbers
+    uv run --no-project tools/twilio_helper.py --list-numbers
 
 # Buy a new Twilio phone number (PUBLIC_URL must be set in .env)
 [group('setup')]
 twilio-buy country="CH":
-    PYTHONPATH=tools uvx --with twilio --with python-dotenv \
-        python -m twilio_helper --buy \
+    uv run --no-project tools/twilio_helper.py --buy \
         --country {{ country }} \
         --webhook "${PUBLIC_URL}/voice"
 
 # Update the voice webhook on an existing Twilio number
 [group('setup')]
 twilio-set-webhook phone=env("TWILIO_PHONE_NUMBER"):
-    PYTHONPATH=tools uvx --with twilio --with python-dotenv \
-        python -m twilio_helper \
+    uv run --no-project tools/twilio_helper.py \
         --update-webhook {{ phone }} "${PUBLIC_URL}/voice"
 
 # List, show, or create a Google Cloud project (use --all to list all projects)
@@ -232,7 +229,7 @@ serve:
 # Start ngrok tunnel + server (full dev flow)
 [group('dev')]
 dev:
-    uv run python tools/ngrok.py
+    uv run --no-project tools/ngrok.py
 
 # ── Testing ────────────────────────────────────────────────────────────────────
 
@@ -314,8 +311,7 @@ logs project=env("GCP_PROJECT"):
 [group('ops')]
 balance:
     @echo "── Twilio ──"
-    PYTHONPATH=tools uvx --with twilio --with python-dotenv \
-        python -m twilio_helper --balance
+    uv run --no-project tools/twilio_helper.py --balance
     @echo "── Google Cloud ──"
     gcloud billing budgets list --billing-account ${GCP_BILLING_ACCOUNT}
     @echo ""

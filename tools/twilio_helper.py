@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "python-dotenv>=1.2.2",
+#     "twilio>=9.10.4",
+# ]
+# ///
 """
 Twilio provisioning helper.
 

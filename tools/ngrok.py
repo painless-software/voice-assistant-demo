@@ -1,3 +1,9 @@
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "python-dotenv>=1.2.2",
+# ]
+# ///
 """Start an ngrok tunnel, persist the public URL in .env, then run the server."""
 
 from __future__ import annotations
@@ -74,7 +80,7 @@ def main() -> None:
     try:
         env = {**os.environ, "PUBLIC_URL": public_url}
         subprocess.run(
-            [sys.executable, "-m", "voice_assistant"],
+            ["uv", "run", "python", "-m", "voice_assistant"],
             env=env,
             check=True,
         )

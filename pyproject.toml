@@ -5,7 +5,6 @@ description = "Customer support hotline with Twilio + Google ADK (Gemini Live AP
 requires-python = ">=3.13"
 dependencies = [
     "google-adk>=1.28.0",
-    "twilio>=9.0.0",
     "audioop-lts>=0.2.1",   # mulaw <-> pcm conversion (Python 3.13+ compatible)
 ]
 
@@ -37,4 +36,3 @@ dev = [
     "pytest-asyncio>=0.25.0",
     "pytest-cov>=6.1.1",
 ]
-# (add local/git overrides here if needed)
