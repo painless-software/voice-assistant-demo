@@ -3,9 +3,9 @@
     "name": "greeting",
     "data": [
       {
-        "query": "Hi there, I have a question.",
+        "query": "[SYSTEM] Greet the customer now.",
         "expected_tool_use": [],
-        "reference": "Sali! Wie chan ich Ihne hüt hälfe?"
+        "reference": "Grüezi mitenand! Was chan ich für Sie tue?"
       }
     ]
   }

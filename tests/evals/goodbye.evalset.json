@@ -1,0 +1,17 @@
+[
+  {
+    "name": "goodbye_warm_farewell",
+    "data": [
+      {
+        "query": "Isch guet. Merci vielmal.",
+        "expected_tool_use": [],
+        "reference": "Gärn gscheh! Chan ich Ihne suscht no hälfe?"
+      },
+      {
+        "query": "Nei, isch guet. Merci vielmal.",
+        "expected_tool_use": [],
+        "reference": "Alles klar, ich wünsch Ihne en schöne Tag! Uf Wiederhöre!"
+      }
+    ]
+  }
+]

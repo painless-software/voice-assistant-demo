@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from voice_assistant.config import (
+    FAREWELL_PHRASES,
     LANGUAGE_PROFILES,
     Settings,
     build_instruction,
@@ -63,6 +64,14 @@ def test_language_profile_has_required_keys(lang_code):
     assert "display" in profile
     assert "voice_name" in profile
     assert "greeting" in profile
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["wiederhören", "tschüss", "au revoir", "arrivederci", "goodbye"],
+)
+def test_farewell_phrases_covers_common_farewells(phrase):
+    assert phrase in FAREWELL_PHRASES
 
 
 def test_language_profile_lookup():

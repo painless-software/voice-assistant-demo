@@ -249,7 +249,8 @@ pytest *args:
 [group('testing')]
 [env("PYTHONWARNINGS", "ignore::UserWarning")]
 eval:
-    uv run adk eval voice_assistant tests/evals/*.evalset.json
+    uv run adk eval voice_assistant tests/evals/*.evalset.json \
+        --config_file_path tests/evals/test_config.json
 
 # ── Quality ────────────────────────────────────────────────────────────────────
 

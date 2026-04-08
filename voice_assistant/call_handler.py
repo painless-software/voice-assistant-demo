@@ -25,7 +25,7 @@ from google.genai import types
 
 from .agent import root_agent
 from .audio import gemini_pcm_to_twilio_mulaw_b64, twilio_mulaw_to_gemini_pcm
-from .config import settings
+from .config import FAREWELL_PHRASES, settings
 
 log = logging.getLogger(__name__)
 
@@ -202,7 +202,6 @@ async def _adk_to_twilio(
     call_end_event: asyncio.Event,
 ) -> None:
     draining = False
-    draining_audio_seen = False
     try:
         async for event in runner.run_live(
             user_id=user_id,
@@ -210,16 +209,7 @@ async def _adk_to_twilio(
             live_request_queue=live_queue,
             run_config=run_config,
         ):
-            # -- Detect end_call tool invocation --
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.function_call and part.function_call.name == "end_call":
-                        log.info(
-                            "Agent invoked end_call tool — draining remaining audio"
-                        )
-                        draining = True
-
-            # -- Transcription logging --
+            # -- Transcription logging & goodbye detection --
             if hasattr(event, "input_transcription") and event.input_transcription:
                 if (
                     hasattr(event.input_transcription, "text")
@@ -231,14 +221,22 @@ async def _adk_to_twilio(
                     if draining:
                         log.info("Caller spoke during goodbye — cancelling drain")
                         draining = False
-                        draining_audio_seen = False
 
             if hasattr(event, "output_transcription") and event.output_transcription:
                 if (
                     hasattr(event.output_transcription, "text")
                     and event.output_transcription.text
                 ):
-                    log.debug("Agent said: %s", event.output_transcription.text)
+                    text = event.output_transcription.text
+                    log.debug("Agent said: %s", text)
+                    # Detect farewell phrase in the agent's speech to trigger
+                    # call termination (replaces end_call tool which is not
+                    # supported by the native audio live model).
+                    if not draining and any(
+                        fp in text.lower() for fp in FAREWELL_PHRASES
+                    ):
+                        log.info("Farewell phrase detected in agent speech — draining")
+                        draining = True
 
             # -- Audio data --
             has_audio = False
@@ -254,8 +252,6 @@ async def _adk_to_twilio(
                             continue
 
                         has_audio = True
-                        if draining:
-                            draining_audio_seen = True
                         mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(
                             part.inline_data.data
                         )
@@ -273,11 +269,9 @@ async def _adk_to_twilio(
                         }
                         await ws.send_text(json.dumps(mark_msg))
 
-            # Once draining, we've heard goodbye audio, and this event has
-            # none, the turn is done.  Without the audio_seen guard the loop
-            # would break on the very first non-audio event after end_call
-            # (e.g. the function_call event itself).
-            if draining and draining_audio_seen and not has_audio:
+            # Once draining and this event carries no more audio, the
+            # farewell turn is complete.
+            if draining and not has_audio:
                 log.info("Goodbye audio fully sent — sending final mark")
                 stream_sid = sid_holder[0]
                 if stream_sid:
@@ -291,7 +285,6 @@ async def _adk_to_twilio(
                 break
 
             if call_end_event.is_set():
-                log.info("Ending ADK stream after end_call")
                 break
 
     except asyncio.CancelledError:

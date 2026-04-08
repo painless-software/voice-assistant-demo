@@ -6,33 +6,6 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# end_call tool
-# ---------------------------------------------------------------------------
-
-
-def test_end_call_returns_status_dict():
-    from voice_assistant.tools.end_call import end_call
-
-    result = end_call(reason="Customer said goodbye")
-    assert result["status"] == "call_ended"
-    assert result["reason"] == "Customer said goodbye"
-
-
-def test_end_call_with_farewell_message():
-    from voice_assistant.tools.end_call import end_call
-
-    result = end_call(reason="Customer done", farewell_message="Thank you!")
-    assert result["farewell_message"] == "Thank you!"
-
-
-def test_end_call_farewell_defaults_to_empty():
-    from voice_assistant.tools.end_call import end_call
-
-    result = end_call(reason="Done")
-    assert result["farewell_message"] == ""
-
-
-# ---------------------------------------------------------------------------
 # get_current_weather tool
 # ---------------------------------------------------------------------------
 
