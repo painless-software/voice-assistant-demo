@@ -226,6 +226,12 @@ async def _adk_to_twilio(
                     and event.input_transcription.text
                 ):
                     log.info("User said: %s", event.input_transcription.text)
+                    # Caller spoke again while we were winding down — stay on
+                    # the line and let the model handle the new input.
+                    if draining:
+                        log.info("Caller spoke during goodbye — cancelling drain")
+                        draining = False
+                        draining_audio_seen = False
 
             if hasattr(event, "output_transcription") and event.output_transcription:
                 if (
