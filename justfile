@@ -320,3 +320,6 @@ balance:
     gcloud billing budgets list --billing-account ${GCP_BILLING_ACCOUNT}
     @echo ""
     @echo "See https://console.cloud.google.com/billing/${GCP_BILLING_ACCOUNT}/reports"
+    @echo ""
+    @echo "── Gemini (AI Studio free tier) ──"
+    @echo "See https://aistudio.google.com/rate-limit?timeRange=last-28-days"
