@@ -8,7 +8,7 @@ excluded from the Docker production image.
 
 | Script | Purpose | Invocation |
 |--------|---------|------------|
-| `twilio_helper.py` | Provision and manage Twilio phone numbers, check account balance | `just twilio-list`, `just twilio-buy`, `just balance` |
+| `twilio_ops.py` | Provision and manage Twilio phone numbers, check account balance | `just twilio-list`, `just twilio-buy`, `just balance` |
 | `ngrok.py` | Start an ngrok tunnel, persist the public URL in `.env`, then run the server | `just dev` |
 
 ## Dependencies

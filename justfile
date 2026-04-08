@@ -18,19 +18,19 @@ port := env("PORT", "8080")
 # List all Twilio phone numbers on your account
 [group('setup')]
 twilio-list:
-    uv run --no-project tools/twilio_helper.py --list-numbers
+    uv run --no-project tools/twilio_ops.py --list-numbers
 
 # Buy a new Twilio phone number (PUBLIC_URL must be set in .env)
 [group('setup')]
 twilio-buy country="CH":
-    uv run --no-project tools/twilio_helper.py --buy \
+    uv run --no-project tools/twilio_ops.py --buy \
         --country {{ country }} \
         --webhook "${PUBLIC_URL}/voice"
 
 # Update the voice webhook on an existing Twilio number
 [group('setup')]
 twilio-set-webhook phone=env("TWILIO_PHONE_NUMBER"):
-    uv run --no-project tools/twilio_helper.py \
+    uv run --no-project tools/twilio_ops.py \
         --update-webhook {{ phone }} "${PUBLIC_URL}/voice"
 
 # List, show, or create a Google Cloud project (use --all to list all projects)
@@ -311,7 +311,7 @@ logs project=env("GCP_PROJECT"):
 [group('ops')]
 balance:
     @echo "── Twilio ──"
-    uv run --no-project tools/twilio_helper.py --balance
+    uv run --no-project tools/twilio_ops.py --balance
     @echo ""
     @echo "── Google Cloud ──"
     gcloud billing budgets list --billing-account ${GCP_BILLING_ACCOUNT} \
