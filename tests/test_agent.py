@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from voice_assistant.agent import _DualModelGemini, _instruction_provider, root_agent
 from voice_assistant.config import GEMINI_MODEL, GEMINI_LIVE_MODEL
@@ -67,3 +67,33 @@ def test_instruction_provider_italian():
     ctx.state = {"language": "it-CH"}
     instruction = _instruction_provider(ctx)
     assert "Swiss Italian" in instruction
+
+
+# ---------------------------------------------------------------------------
+# _DualModelGemini.connect — model swapping
+# ---------------------------------------------------------------------------
+
+
+async def test_dual_model_connect_swaps_model():
+    """connect() temporarily sets llm_request.model to the live model."""
+    dual = _DualModelGemini(model=GEMINI_MODEL)
+    llm_request = MagicMock()
+    llm_request.model = GEMINI_MODEL
+
+    mock_conn = AsyncMock()
+    with patch.object(
+        _DualModelGemini.__mro__[1],  # Gemini base class
+        "connect",
+        return_value=AsyncMock(),
+    ) as mock_super_connect:
+        # Make super().connect() an async context manager that yields mock_conn
+        mock_super_connect.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_super_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        async with dual.connect(llm_request) as conn:
+            # During the context, model should be the live model
+            assert llm_request.model == GEMINI_LIVE_MODEL
+            assert conn is mock_conn
+
+    # After exiting, model should be restored
+    assert llm_request.model == GEMINI_MODEL

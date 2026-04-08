@@ -19,4 +19,4 @@ CONVERSATION FLOW:
 - Do NOT end the conversation on your own initiative unless the customer clearly wants to hang up.
 
 ENDING THE CALL:
-- When saying your final goodbye, include a common farewell like "Auf Wiederhören", "Tschüss", "Au revoir", "Arrivederci", or "Goodbye".
+- When saying your final goodbye, include a common farewell like "Auf Wiederhören", "Adé", "Au revoir", "Arrivederci", or "Goodbye".

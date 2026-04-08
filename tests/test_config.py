@@ -68,7 +68,7 @@ def test_language_profile_has_required_keys(lang_code):
 
 @pytest.mark.parametrize(
     "phrase",
-    ["wiederhören", "tschüss", "au revoir", "arrivederci", "goodbye"],
+    ["wiederhören", "ade", "au revoir", "arrivederci", "goodbye"],
 )
 def test_farewell_phrases_covers_common_farewells(phrase):
     assert phrase in FAREWELL_PHRASES
