@@ -202,6 +202,11 @@ async def _adk_to_twilio(
     call_end_event: asyncio.Event,
 ) -> None:
     draining = False
+    # Latch set when a barge-in is detected; cleared when the caller's next
+    # turn starts (input_transcription text). While set, buffered agent
+    # audio still sitting in ADK's iterator is dropped instead of forwarded
+    # to Twilio, so the clear isn't defeated by already-queued output.
+    interrupt_latched = False
     try:
         async for event in runner.run_live(
             user_id=user_id,
@@ -221,6 +226,8 @@ async def _adk_to_twilio(
                     if draining:
                         log.info("Caller spoke during goodbye — cancelling drain")
                         draining = False
+                    # New user turn — stop suppressing agent audio.
+                    interrupt_latched = False
 
             if hasattr(event, "output_transcription") and event.output_transcription:
                 if (
@@ -238,22 +245,25 @@ async def _adk_to_twilio(
                         log.info("Farewell phrase detected in agent speech — draining")
                         draining = True
 
-            # -- Barge-in: caller interrupted agent mid-utterance --
-            # Gemini Live's server-side VAD sets ``interrupted=True`` on the
-            # event it emits when caller speech is detected during model
-            # output. We flush Twilio's outbound buffer with a ``clear``
-            # event so any audio we already sent but Twilio has not yet
-            # played is discarded, and we drop any audio carried on this
-            # event itself.
-            if getattr(event, "interrupted", None):
-                log.info("Caller interrupted agent — clearing Twilio buffer")
-                stream_sid = sid_holder[0]
-                if stream_sid:
-                    clear_msg = {"event": "clear", "streamSid": stream_sid}
-                    await ws.send_text(json.dumps(clear_msg))
-                if draining:
-                    log.info("Interrupted during goodbye — cancelling drain")
-                    draining = False
+            # -- Barge-in: flush Twilio buffer and suppress stale audio --
+            # NOTE: Must run AFTER farewell detection so an event carrying
+            # both farewell text AND interrupted=True correctly cancels drain
+            # (barge-in wins over goodbye). Latched until next user turn.
+            if event.interrupted:
+                if not interrupt_latched:
+                    log.info("Caller interrupted agent — clearing Twilio buffer")
+                    if sid_holder[0]:
+                        await ws.send_text(
+                            json.dumps({"event": "clear", "streamSid": sid_holder[0]})
+                        )
+                    interrupt_latched = True
+                draining = False
+                continue
+
+            # Drop any agent audio that arrived in the iterator buffer after
+            # the interrupt but before the next user turn — forwarding it
+            # would defeat the Twilio ``clear``.
+            if interrupt_latched:
                 continue
 
             # -- Audio data --

@@ -448,22 +448,106 @@ async def test_interrupted_without_sid_is_noop():
     "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
     return_value="bXVsYXc=",
 )
-async def test_audio_flows_after_interrupt(mock_convert):
-    """After an interruption, subsequent audio events are still forwarded."""
+async def test_audio_flows_after_new_user_turn(mock_convert):
+    """After an interrupt, audio resumes only once a new user turn begins."""
     ws = AsyncMock()
     events = [
         _make_event(interrupted=True),
-        _make_event(audio_data=b"\x02\x03"),
+        _make_event(input_text="Warte, ich han no e Frag"),  # new user turn
+        _make_event(audio_data=b"\x02\x03"),  # agent's new response
     ]
 
     await _run_adk(events, ws)
 
     sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
-    # Expect: 1 clear, then 1 media + 1 mark from the second event
+    # Expect: 1 clear, then 1 media + 1 mark from the third event
     assert sent[0]["event"] == "clear"
     assert sent[1]["event"] == "media"
     assert sent[1]["media"]["payload"] == "bXVsYXc="
     assert sent[2]["event"] == "mark"
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_audio_buffered_after_interrupt_is_dropped(mock_convert):
+    """Audio events arriving AFTER an interrupt but before the new user turn
+    (i.e. still-buffered output from the interrupted turn) must not be
+    forwarded to Twilio — otherwise they defeat the Twilio `clear`.
+    """
+    ws = AsyncMock()
+    events = [
+        _make_event(interrupted=True),
+        _make_event(audio_data=b"\x00"),  # stale buffered audio
+        _make_event(audio_data=b"\x01"),  # stale buffered audio
+    ]
+
+    await _run_adk(events, ws)
+
+    mock_convert.assert_not_called()
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    media_msgs = [m for m in sent if m.get("event") == "media"]
+    assert media_msgs == []
+
+
+async def test_consecutive_interrupts_send_single_clear():
+    """Multiple interrupted events within one barge-in window produce at most
+    one Twilio `clear` (debounced via interrupt latch).
+    """
+    ws = AsyncMock()
+    events = [
+        _make_event(interrupted=True),
+        _make_event(interrupted=True),
+        _make_event(interrupted=True),
+    ]
+
+    await _run_adk(events, ws)
+
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    clears = [m for m in sent if m.get("event") == "clear"]
+    assert len(clears) == 1
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_farewell_and_interrupt_same_event_does_not_end_call(mock_convert):
+    """Regression: an event carrying BOTH farewell text AND interrupted=True
+    must cancel the drain (barge-in wins) rather than terminating the call.
+    This pins down the load-bearing block order in ``_adk_to_twilio``.
+    """
+    ws = AsyncMock()
+    call_end_event = asyncio.Event()
+    events = [
+        _make_event(output_text="Adé!", interrupted=True),
+        _make_event(input_text="Nei warte!"),
+    ]
+
+    await _run_adk(events, ws, call_end_event=call_end_event)
+
+    assert not call_end_event.is_set()
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    assert any(m.get("event") == "clear" for m in sent)
+
+
+async def test_interrupt_handling_with_real_adk_event():
+    """Schema-drift guard: run the barge-in path with a real
+    google.adk.events.Event instance (not a SimpleNamespace fake).
+    Fails loudly if ADK renames or retypes the ``interrupted`` field.
+    """
+    from google.adk.events.event import Event
+
+    ws = AsyncMock()
+    real_event = Event(invocation_id="inv-1", author="model", interrupted=True)
+
+    await _run_adk([real_event], ws, sid_holder=["SM-REAL"])
+
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    clears = [m for m in sent if m.get("event") == "clear"]
+    assert len(clears) == 1
+    assert clears[0]["streamSid"] == "SM-REAL"
 
 
 # ---------------------------------------------------------------------------
