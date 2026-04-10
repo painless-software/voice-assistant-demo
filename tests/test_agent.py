@@ -21,9 +21,10 @@ def test_root_agent_name():
     assert root_agent.name == "customer_service"
 
 
-def test_root_agent_has_tools():
-    tool_names = [t.__name__ for t in root_agent.tools]
-    assert "get_current_weather" in tool_names
+def test_root_agent_has_no_tools_for_native_audio():
+    # Native audio live model does not support function calling.
+    # Tools are disabled until that limitation is lifted.
+    assert root_agent.tools == []
 
 
 def test_root_agent_has_instruction():

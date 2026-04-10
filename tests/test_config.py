@@ -37,9 +37,9 @@ def test_build_instruction_includes_escalation():
     assert "ESCALATION" in instruction
 
 
-def test_build_instruction_includes_tool_guidance():
+def test_build_instruction_includes_honesty_guidance():
     instruction = build_instruction("de-CH")
-    assert "get_current_weather" in instruction
+    assert "pretend" in instruction or "honestly" in instruction
 
 
 def test_build_instruction_default_language():
