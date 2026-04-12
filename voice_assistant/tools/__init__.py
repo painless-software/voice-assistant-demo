@@ -1,5 +1,9 @@
-"""Agent tools -- plain Python functions passed to ADK Agent(tools=[...])."""
+"""Agent tools -- plain Python functions passed to ADK Agent(tools=[...]).
 
-from .weather import get_current_weather
+NOTE: The native audio live model (gemini-*-native-audio-*) does not
+support function calling.  Tools registered here only work in text mode
+(adk web / adk run).  Until native-audio tool support lands, keep the
+live-facing tool list empty so Twilio calls don't crash with a 1008.
+"""
 
-ALL_TOOLS: list = [get_current_weather]
+ALL_TOOLS: list = []

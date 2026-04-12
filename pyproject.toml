@@ -15,6 +15,9 @@ filterwarnings = [
     "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
 ]
 
+[tool.setuptools.packages.find]
+include = ["voice_assistant*"]
+
 [tool.coverage.run]
 source = ["voice_assistant"]
 

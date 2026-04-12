@@ -202,6 +202,11 @@ async def _adk_to_twilio(
     call_end_event: asyncio.Event,
 ) -> None:
     draining = False
+    # Latch set when a barge-in is detected; cleared when the caller's next
+    # turn starts (input_transcription text). While set, buffered agent
+    # audio still sitting in ADK's iterator is dropped instead of forwarded
+    # to Twilio, so the clear isn't defeated by already-queued output.
+    interrupt_latched = False
     try:
         async for event in runner.run_live(
             user_id=user_id,
@@ -209,7 +214,7 @@ async def _adk_to_twilio(
             live_request_queue=live_queue,
             run_config=run_config,
         ):
-            # -- Transcription logging & goodbye detection --
+            # -- Transcription logging --
             if hasattr(event, "input_transcription") and event.input_transcription:
                 if (
                     hasattr(event.input_transcription, "text")
@@ -221,7 +226,35 @@ async def _adk_to_twilio(
                     if draining:
                         log.info("Caller spoke during goodbye — cancelling drain")
                         draining = False
+                    # New user turn — stop suppressing agent audio.
+                    interrupt_latched = False
 
+            # -- Barge-in: flush Twilio buffer and suppress stale audio --
+            # Latch is only set once a ``clear`` has actually been
+            # delivered (requires streamSid). Until then, subsequent
+            # interrupted events retry.
+            if event.interrupted:
+                if not interrupt_latched:
+                    stream_sid = sid_holder[0]
+                    if stream_sid:
+                        log.info("Caller interrupted agent — clearing Twilio buffer")
+                        await ws.send_text(
+                            json.dumps({"event": "clear", "streamSid": stream_sid})
+                        )
+                        interrupt_latched = True
+                    else:
+                        log.info("Caller interrupted but streamSid not available yet")
+                draining = False
+                continue
+
+            # While the interrupt latch is set, drop everything except
+            # input_transcription (handled above) and further interrupted
+            # events.  This prevents stale farewell phrases from re-arming
+            # the drain state and stale audio from defeating the clear.
+            if interrupt_latched:
+                continue
+
+            # -- Farewell / goodbye detection --
             if hasattr(event, "output_transcription") and event.output_transcription:
                 if (
                     hasattr(event.output_transcription, "text")
