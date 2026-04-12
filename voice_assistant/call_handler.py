@@ -214,7 +214,7 @@ async def _adk_to_twilio(
             live_request_queue=live_queue,
             run_config=run_config,
         ):
-            # -- Transcription logging & goodbye detection --
+            # -- Transcription logging --
             if hasattr(event, "input_transcription") and event.input_transcription:
                 if (
                     hasattr(event.input_transcription, "text")
@@ -229,6 +229,32 @@ async def _adk_to_twilio(
                     # New user turn — stop suppressing agent audio.
                     interrupt_latched = False
 
+            # -- Barge-in: flush Twilio buffer and suppress stale audio --
+            # Latch is only set once a ``clear`` has actually been
+            # delivered (requires streamSid). Until then, subsequent
+            # interrupted events retry.
+            if event.interrupted:
+                if not interrupt_latched:
+                    stream_sid = sid_holder[0]
+                    if stream_sid:
+                        log.info("Caller interrupted agent — clearing Twilio buffer")
+                        await ws.send_text(
+                            json.dumps({"event": "clear", "streamSid": stream_sid})
+                        )
+                        interrupt_latched = True
+                    else:
+                        log.info("Caller interrupted but streamSid not available yet")
+                draining = False
+                continue
+
+            # While the interrupt latch is set, drop everything except
+            # input_transcription (handled above) and further interrupted
+            # events.  This prevents stale farewell phrases from re-arming
+            # the drain state and stale audio from defeating the clear.
+            if interrupt_latched:
+                continue
+
+            # -- Farewell / goodbye detection --
             if hasattr(event, "output_transcription") and event.output_transcription:
                 if (
                     hasattr(event.output_transcription, "text")
@@ -244,27 +270,6 @@ async def _adk_to_twilio(
                     ):
                         log.info("Farewell phrase detected in agent speech — draining")
                         draining = True
-
-            # -- Barge-in: flush Twilio buffer and suppress stale audio --
-            # NOTE: Must run AFTER farewell detection so an event carrying
-            # both farewell text AND interrupted=True correctly cancels drain
-            # (barge-in wins over goodbye). Latched until next user turn.
-            if event.interrupted:
-                if not interrupt_latched:
-                    log.info("Caller interrupted agent — clearing Twilio buffer")
-                    if sid_holder[0]:
-                        await ws.send_text(
-                            json.dumps({"event": "clear", "streamSid": sid_holder[0]})
-                        )
-                    interrupt_latched = True
-                draining = False
-                continue
-
-            # Drop any agent audio that arrived in the iterator buffer after
-            # the interrupt but before the next user turn — forwarding it
-            # would defeat the Twilio ``clear``.
-            if interrupt_latched:
-                continue
 
             # -- Audio data --
             has_audio = False

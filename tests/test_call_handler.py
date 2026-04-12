@@ -532,6 +532,29 @@ async def test_farewell_and_interrupt_same_event_does_not_end_call(mock_convert)
     assert any(m.get("event") == "clear" for m in sent)
 
 
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_stale_farewell_while_latched_does_not_end_call(mock_convert):
+    """A buffered event with farewell text arriving while interrupt_latched
+    must NOT re-arm draining. Without this guard the call could end
+    spuriously after the latch clears.
+    """
+    ws = AsyncMock()
+    call_end_event = asyncio.Event()
+    events = [
+        _make_event(interrupted=True),  # latch ON
+        _make_event(output_text="Adé!"),  # stale farewell — must be ignored
+        _make_event(input_text="Nei!"),  # clears latch
+        _make_event(),  # empty, non-audio — must NOT trigger drain completion
+    ]
+
+    await _run_adk(events, ws, call_end_event=call_end_event)
+
+    assert not call_end_event.is_set()
+
+
 async def test_interrupt_handling_with_real_adk_event():
     """Schema-drift guard: run the barge-in path with a real
     google.adk.events.Event instance (not a SimpleNamespace fake).
