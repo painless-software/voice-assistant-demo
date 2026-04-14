@@ -20,6 +20,7 @@ import logging
 from fastapi import WebSocket, WebSocketDisconnect
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig
+from google.adk.events.event import Event
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
@@ -187,7 +188,140 @@ async def _wait_for_goodbye_mark(ws: WebSocket) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ADK -> Twilio direction
+# ADK -> Twilio direction: per-event helpers
+# ---------------------------------------------------------------------------
+
+
+class _CallLoopState:
+    """Mutable state shared across per-event helpers in ``_adk_to_twilio``."""
+
+    __slots__ = ("draining", "interrupt_latched")
+
+    def __init__(self) -> None:
+        self.draining: bool = False
+        # Set when a Twilio ``clear`` has been delivered. While set,
+        # stale agent audio and farewell phrases are dropped until the
+        # caller's next turn clears the latch.
+        self.interrupt_latched: bool = False
+
+
+def _process_input_transcription(event: Event, state: _CallLoopState) -> None:
+    """Log caller speech and clear drain / interrupt latch on new user turn."""
+    if not (hasattr(event, "input_transcription") and event.input_transcription):
+        return
+    if not (
+        hasattr(event.input_transcription, "text") and event.input_transcription.text
+    ):
+        return
+    log.info("User said: %s", event.input_transcription.text)
+    if state.draining:
+        log.info("Caller spoke during goodbye — cancelling drain")
+        state.draining = False
+    state.interrupt_latched = False
+
+
+async def _handle_interrupt(
+    event: Event,
+    state: _CallLoopState,
+    ws: WebSocket,
+    sid_holder: list[str | None],
+) -> bool:
+    """Send Twilio ``clear`` on barge-in. Returns True to skip the event."""
+    if not getattr(event, "interrupted", None):
+        return False
+    if not state.interrupt_latched:
+        stream_sid = sid_holder[0]
+        if stream_sid:
+            log.info("Caller interrupted agent — clearing Twilio buffer")
+            await ws.send_text(json.dumps({"event": "clear", "streamSid": stream_sid}))
+            state.interrupt_latched = True
+        else:
+            log.info("Caller interrupted but streamSid not available yet")
+    state.draining = False
+    return True
+
+
+def _detect_farewell(event: Event, state: _CallLoopState) -> None:
+    """Detect farewell phrases in agent output to trigger drain."""
+    if not (hasattr(event, "output_transcription") and event.output_transcription):
+        return
+    if not (
+        hasattr(event.output_transcription, "text") and event.output_transcription.text
+    ):
+        return
+    text = event.output_transcription.text
+    log.debug("Agent said: %s", text)
+    if not state.draining and any(fp in text.lower() for fp in FAREWELL_PHRASES):
+        log.info("Farewell phrase detected in agent speech — draining")
+        state.draining = True
+
+
+async def _relay_audio(
+    event: Event,
+    ws: WebSocket,
+    sid_holder: list[str | None],
+) -> bool:
+    """Forward audio from ADK to Twilio. Returns True if audio was sent."""
+    has_audio = False
+    if not (event.content and event.content.parts):
+        return has_audio
+    for part in event.content.parts:
+        if not (part.inline_data and part.inline_data.data):
+            continue
+        stream_sid = sid_holder[0]
+        if not stream_sid:
+            await asyncio.sleep(0.05)
+            stream_sid = sid_holder[0]
+        if not stream_sid:
+            log.debug("No stream SID yet, dropping audio chunk")
+            continue
+
+        has_audio = True
+        mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(part.inline_data.data)
+        await ws.send_text(
+            json.dumps(
+                {
+                    "event": "media",
+                    "streamSid": stream_sid,
+                    "media": {"payload": mulaw_b64},
+                }
+            )
+        )
+        await ws.send_text(
+            json.dumps(
+                {
+                    "event": "mark",
+                    "streamSid": stream_sid,
+                    "mark": {"name": "adk-chunk"},
+                }
+            )
+        )
+    return has_audio
+
+
+async def _finish_drain(
+    ws: WebSocket,
+    sid_holder: list[str | None],
+    call_end_event: asyncio.Event,
+) -> None:
+    """Send the goodbye-done mark and signal call termination."""
+    log.info("Goodbye audio fully sent — sending final mark")
+    stream_sid = sid_holder[0]
+    if stream_sid:
+        await ws.send_text(
+            json.dumps(
+                {
+                    "event": "mark",
+                    "streamSid": stream_sid,
+                    "mark": {"name": "goodbye-done"},
+                }
+            )
+        )
+    call_end_event.set()
+
+
+# ---------------------------------------------------------------------------
+# ADK -> Twilio direction: main loop
 # ---------------------------------------------------------------------------
 
 
@@ -201,7 +335,7 @@ async def _adk_to_twilio(
     sid_holder: list[str | None],
     call_end_event: asyncio.Event,
 ) -> None:
-    draining = False
+    state = _CallLoopState()
     try:
         async for event in runner.run_live(
             user_id=user_id,
@@ -209,81 +343,19 @@ async def _adk_to_twilio(
             live_request_queue=live_queue,
             run_config=run_config,
         ):
-            # -- Transcription logging & goodbye detection --
-            if hasattr(event, "input_transcription") and event.input_transcription:
-                if (
-                    hasattr(event.input_transcription, "text")
-                    and event.input_transcription.text
-                ):
-                    log.info("User said: %s", event.input_transcription.text)
-                    # Caller spoke again while we were winding down — stay on
-                    # the line and let the model handle the new input.
-                    if draining:
-                        log.info("Caller spoke during goodbye — cancelling drain")
-                        draining = False
+            _process_input_transcription(event, state)
 
-            if hasattr(event, "output_transcription") and event.output_transcription:
-                if (
-                    hasattr(event.output_transcription, "text")
-                    and event.output_transcription.text
-                ):
-                    text = event.output_transcription.text
-                    log.debug("Agent said: %s", text)
-                    # Detect farewell phrase in the agent's speech to trigger
-                    # call termination (replaces end_call tool which is not
-                    # supported by the native audio live model).
-                    if not draining and any(
-                        fp in text.lower() for fp in FAREWELL_PHRASES
-                    ):
-                        log.info("Farewell phrase detected in agent speech — draining")
-                        draining = True
+            if await _handle_interrupt(event, state, ws, sid_holder):
+                continue
+            if state.interrupt_latched:
+                continue
 
-            # -- Audio data --
-            has_audio = False
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.inline_data and part.inline_data.data:
-                        stream_sid = sid_holder[0]
-                        if not stream_sid:
-                            await asyncio.sleep(0.05)
-                            stream_sid = sid_holder[0]
-                        if not stream_sid:
-                            log.debug("No stream SID yet, dropping audio chunk")
-                            continue
+            _detect_farewell(event, state)
+            has_audio = await _relay_audio(event, ws, sid_holder)
 
-                        has_audio = True
-                        mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(
-                            part.inline_data.data
-                        )
-                        media_msg = {
-                            "event": "media",
-                            "streamSid": stream_sid,
-                            "media": {"payload": mulaw_b64},
-                        }
-                        await ws.send_text(json.dumps(media_msg))
-
-                        mark_msg = {
-                            "event": "mark",
-                            "streamSid": stream_sid,
-                            "mark": {"name": "adk-chunk"},
-                        }
-                        await ws.send_text(json.dumps(mark_msg))
-
-            # Once draining and this event carries no more audio, the
-            # farewell turn is complete.
-            if draining and not has_audio:
-                log.info("Goodbye audio fully sent — sending final mark")
-                stream_sid = sid_holder[0]
-                if stream_sid:
-                    final_mark = {
-                        "event": "mark",
-                        "streamSid": stream_sid,
-                        "mark": {"name": "goodbye-done"},
-                    }
-                    await ws.send_text(json.dumps(final_mark))
-                call_end_event.set()
+            if state.draining and not has_audio:
+                await _finish_drain(ws, sid_holder, call_end_event)
                 break
-
             if call_end_event.is_set():
                 break
 

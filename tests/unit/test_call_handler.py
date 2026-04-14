@@ -36,6 +36,7 @@ def _make_event(
     audio_data: bytes | None = None,
     output_text: str | None = None,
     input_text: str | None = None,
+    interrupted: bool | None = None,
 ) -> SimpleNamespace:
     """Build a fake ADK event with the requested attributes."""
     parts = []
@@ -60,6 +61,7 @@ def _make_event(
         content=content,
         output_transcription=output_transcription,
         input_transcription=input_transcription,
+        interrupted=interrupted,
     )
 
 
@@ -373,6 +375,207 @@ async def test_drain_cancel_resets_draining_state(mock_convert):
 
     # call_end_event should NOT be set — drain was cancelled
     assert not call_end_event.is_set()
+
+
+# ---------------------------------------------------------------------------
+# Barge-in / interruption handling
+# ---------------------------------------------------------------------------
+
+
+async def test_interrupted_sends_twilio_clear():
+    """An interrupted event from ADK triggers a Twilio `clear` event."""
+    ws = AsyncMock()
+    events = [_make_event(interrupted=True)]
+
+    await _run_adk(events, ws, sid_holder=["SM-XYZ"])
+
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    clears = [m for m in sent if m.get("event") == "clear"]
+    assert len(clears) == 1
+    assert clears[0]["streamSid"] == "SM-XYZ"
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_interrupted_skips_audio(mock_convert):
+    """Audio carried on an interrupted event must not be forwarded to Twilio."""
+    ws = AsyncMock()
+    events = [_make_event(audio_data=b"\x00\x01", interrupted=True)]
+
+    await _run_adk(events, ws)
+
+    mock_convert.assert_not_called()
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    media_msgs = [m for m in sent if m.get("event") == "media"]
+    assert media_msgs == []
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_interrupt_cancels_drain(mock_convert):
+    """Barge-in during goodbye drain cancels draining instead of ending the call."""
+    ws = AsyncMock()
+    call_end_event = asyncio.Event()
+    events = [
+        _make_event(output_text="Adé!", audio_data=b"\x00"),  # drain ON
+        _make_event(interrupted=True),  # caller interrupts — drain OFF
+        _make_event(),  # drain is off, so this does NOT terminate
+    ]
+
+    await _run_adk(events, ws, call_end_event=call_end_event)
+
+    assert not call_end_event.is_set()
+    # And a clear event was sent for the interruption
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    assert any(m.get("event") == "clear" for m in sent)
+
+
+async def test_interrupted_without_sid_is_noop():
+    """If no streamSid is known yet, an interruption must not crash or send clear."""
+    ws = AsyncMock()
+    events = [_make_event(interrupted=True)]
+
+    await _run_adk(events, ws, sid_holder=[None])
+
+    ws.send_text.assert_not_called()
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="bXVsYXc=",
+)
+async def test_audio_flows_after_new_user_turn(mock_convert):
+    """After an interrupt, audio resumes only once a new user turn begins."""
+    ws = AsyncMock()
+    events = [
+        _make_event(interrupted=True),
+        _make_event(input_text="Warte, ich han no e Frag"),  # new user turn
+        _make_event(audio_data=b"\x02\x03"),  # agent's new response
+    ]
+
+    await _run_adk(events, ws)
+
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    # Expect: 1 clear, then 1 media + 1 mark from the third event
+    assert sent[0]["event"] == "clear"
+    assert sent[1]["event"] == "media"
+    assert sent[1]["media"]["payload"] == "bXVsYXc="
+    assert sent[2]["event"] == "mark"
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_audio_buffered_after_interrupt_is_dropped(mock_convert):
+    """Audio events arriving AFTER an interrupt but before the new user turn
+    (i.e. still-buffered output from the interrupted turn) must not be
+    forwarded to Twilio — otherwise they defeat the Twilio `clear`.
+    """
+    ws = AsyncMock()
+    events = [
+        _make_event(interrupted=True),
+        _make_event(audio_data=b"\x00"),  # stale buffered audio
+        _make_event(audio_data=b"\x01"),  # stale buffered audio
+    ]
+
+    await _run_adk(events, ws)
+
+    mock_convert.assert_not_called()
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    media_msgs = [m for m in sent if m.get("event") == "media"]
+    assert media_msgs == []
+
+
+async def test_consecutive_interrupts_send_single_clear():
+    """Multiple interrupted events within one barge-in window produce at most
+    one Twilio `clear` (debounced via interrupt latch).
+    """
+    ws = AsyncMock()
+    events = [
+        _make_event(interrupted=True),
+        _make_event(interrupted=True),
+        _make_event(interrupted=True),
+    ]
+
+    await _run_adk(events, ws)
+
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    clears = [m for m in sent if m.get("event") == "clear"]
+    assert len(clears) == 1
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_farewell_and_interrupt_same_event_does_not_end_call(mock_convert):
+    """Regression: an event carrying BOTH farewell text AND interrupted=True
+    must not end the call. The interrupt handler short-circuits via
+    ``continue`` before farewell detection runs, so draining is never set.
+    """
+    ws = AsyncMock()
+    call_end_event = asyncio.Event()
+    events = [
+        _make_event(output_text="Adé!", interrupted=True),
+        _make_event(input_text="Nei warte!"),
+    ]
+
+    await _run_adk(events, ws, call_end_event=call_end_event)
+
+    assert not call_end_event.is_set()
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    assert any(m.get("event") == "clear" for m in sent)
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_stale_farewell_while_latched_does_not_end_call(mock_convert):
+    """A buffered event with farewell text arriving while interrupt_latched
+    must NOT re-arm draining. Without this guard the call could end
+    spuriously after the latch clears.
+    """
+    ws = AsyncMock()
+    call_end_event = asyncio.Event()
+    events = [
+        _make_event(interrupted=True),  # latch ON
+        _make_event(output_text="Adé!"),  # stale farewell — must be ignored
+        _make_event(input_text="Nei!"),  # clears latch
+        _make_event(),  # empty, non-audio — must NOT trigger drain completion
+    ]
+
+    await _run_adk(events, ws, call_end_event=call_end_event)
+
+    assert not call_end_event.is_set()
+
+
+async def test_interrupt_handling_with_real_adk_event():
+    """Schema-drift guard: run the barge-in path with a real
+    google.adk.events.Event instance (not a SimpleNamespace fake).
+    Fails loudly if ADK renames or retypes the ``interrupted`` field.
+    """
+    from google.adk.events.event import Event
+
+    ws = AsyncMock()
+    real_event = Event(invocation_id="inv-1", author="model", interrupted=True)
+
+    await _run_adk([real_event], ws, sid_holder=["SM-REAL"])
+
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    clears = [m for m in sent if m.get("event") == "clear"]
+    assert len(clears) == 1
+    assert clears[0]["streamSid"] == "SM-REAL"
+
+
+# ---------------------------------------------------------------------------
+# Remaining _adk_to_twilio tests
+# ---------------------------------------------------------------------------
 
 
 async def test_adk_call_end_event_preset_breaks_loop():
