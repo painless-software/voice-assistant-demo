@@ -20,6 +20,7 @@ import logging
 from fastapi import WebSocket, WebSocketDisconnect
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig
+from google.adk.events.event import Event
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
@@ -204,7 +205,7 @@ class _CallLoopState:
         self.interrupt_latched: bool = False
 
 
-def _process_input_transcription(event: object, state: _CallLoopState) -> None:
+def _process_input_transcription(event: Event, state: _CallLoopState) -> None:
     """Log caller speech and clear drain / interrupt latch on new user turn."""
     if not (hasattr(event, "input_transcription") and event.input_transcription):
         return
@@ -220,7 +221,7 @@ def _process_input_transcription(event: object, state: _CallLoopState) -> None:
 
 
 async def _handle_interrupt(
-    event: object,
+    event: Event,
     state: _CallLoopState,
     ws: WebSocket,
     sid_holder: list[str | None],
@@ -240,7 +241,7 @@ async def _handle_interrupt(
     return True
 
 
-def _detect_farewell(event: object, state: _CallLoopState) -> None:
+def _detect_farewell(event: Event, state: _CallLoopState) -> None:
     """Detect farewell phrases in agent output to trigger drain."""
     if not (hasattr(event, "output_transcription") and event.output_transcription):
         return
@@ -256,7 +257,7 @@ def _detect_farewell(event: object, state: _CallLoopState) -> None:
 
 
 async def _relay_audio(
-    event: object,
+    event: Event,
     ws: WebSocket,
     sid_holder: list[str | None],
 ) -> bool:
