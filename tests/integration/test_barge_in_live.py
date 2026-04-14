@@ -8,7 +8,7 @@ This is NOT a unit test. It makes real Gemini API calls (needs
 demand, not in CI.
 
 Usage:
-    uv run python scripts/barge_in_smoke_test.py
+    just integration
 
 Preparation (run once on macOS):
     say -o /tmp/greeting.aiff "Hello, can you tell me the weather in Zurich please?"
@@ -28,9 +28,6 @@ import sys
 import time
 import wave
 from pathlib import Path
-
-# Allow running as `uv run python scripts/barge_in_smoke_test.py` from repo root
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -137,7 +134,12 @@ async def _stream_frames(
     frames: list[str],
     label: str,
 ) -> None:
-    log.info("🎙  Streaming %d frames (%s) = %.1fs", len(frames), label, len(frames) * FRAME_MS / 1000)
+    log.info(
+        "🎙  Streaming %d frames (%s) = %.1fs",
+        len(frames),
+        label,
+        len(frames) * FRAME_MS / 1000,
+    )
     for frame in frames:
         await _send_frame(ws, frame)
         await asyncio.sleep(FRAME_MS / 1000)
@@ -155,11 +157,15 @@ async def drive(ws: FakeTwilioWS) -> None:
     """Scripted caller behavior."""
     greeting = load_mulaw_frames_b64(GREETING_WAV)
     interrupt = load_mulaw_frames_b64(INTERRUPT_WAV)
-    log.info("Loaded: greeting=%d frames, interrupt=%d frames", len(greeting), len(interrupt))
+    log.info(
+        "Loaded: greeting=%d frames, interrupt=%d frames", len(greeting), len(interrupt)
+    )
 
     # Initial Twilio handshake
     await ws.recv_queue.put(json.dumps({"event": "connected"}))
-    await ws.recv_queue.put(json.dumps({"event": "start", "streamSid": "SM-SMOKE-TEST"}))
+    await ws.recv_queue.put(
+        json.dumps({"event": "start", "streamSid": "SM-SMOKE-TEST"})
+    )
 
     # Give Gemini a moment to start its system-triggered greeting
     await _stream_silence(ws, 1.0, "initial pause")
@@ -241,7 +247,9 @@ async def main() -> int:
         print(f"   last  at t={media[-1][0]:.2f}s")
 
     print(f"🏷  Mark events:   {len(marks)}")
-    goodbye_marks = [t for t, m in marks if m.get("mark", {}).get("name") == "goodbye-done"]
+    goodbye_marks = [
+        t for t, m in marks if m.get("mark", {}).get("name") == "goodbye-done"
+    ]
     if goodbye_marks:
         print(f"   goodbye-done at t={goodbye_marks[0]:.2f}s")
 

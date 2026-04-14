@@ -515,8 +515,8 @@ async def test_consecutive_interrupts_send_single_clear():
 )
 async def test_farewell_and_interrupt_same_event_does_not_end_call(mock_convert):
     """Regression: an event carrying BOTH farewell text AND interrupted=True
-    must cancel the drain (barge-in wins) rather than terminating the call.
-    This pins down the load-bearing block order in ``_adk_to_twilio``.
+    must not end the call. The interrupt handler short-circuits via
+    ``continue`` before farewell detection runs, so draining is never set.
     """
     ws = AsyncMock()
     call_end_event = asyncio.Event()

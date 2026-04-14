@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: barge-in-006
 tags: [code-review, architecture, regression-risk]
@@ -10,12 +10,15 @@ dependencies: []
 
 ## Problem Statement
 
-The barge-in block at `voice_assistant/call_handler.py:248-257` runs **after** the farewell-detection block at `:225-239`. This ordering is load-bearing:
+**Resolved.** The barge-in handler (`_handle_interrupt`) now runs BEFORE
+farewell detection (`_detect_farewell`) and short-circuits with `continue`,
+so an event with both farewell text and `interrupted=True` never reaches
+farewell detection. Regression tests added:
+- `test_farewell_and_interrupt_same_event_does_not_end_call`
+- `test_stale_farewell_while_latched_does_not_end_call`
 
-- If a single event has both `output_transcription` (with farewell text) and `interrupted=True`, the farewell block sets `draining=True`, then the interrupt block immediately sets `draining=False`. Net effect: agent said goodbye but caller barged in, so call stays open. **Correct.**
-- If a future refactor moves the interrupt block above the farewell block, the logic silently breaks: `draining` would be set after the interrupt cleared it.
-
-There is no comment marking this dependency, and no test exercises the same-event farewell+interrupted case.
+The ordering concern is now structurally enforced (interrupt handler returns
+True → main loop skips the rest) rather than depending on inline block order.
 
 ## Findings
 

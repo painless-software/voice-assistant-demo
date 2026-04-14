@@ -243,7 +243,12 @@ test: pytest eval
 # Run unit tests with coverage
 [group('testing')]
 pytest *args:
-    uv run pytest --cov {{ args }}
+    uv run pytest tests/unit --cov {{ args }}
+
+# Run integration tests (requires GOOGLE_API_KEY, costs API budget)
+[group('testing')]
+integration *args:
+    uv run pytest tests/integration -v {{ args }}
 
 # Run ADK evaluation tests
 [group('testing')]
