@@ -27,6 +27,7 @@ from google.genai import types
 from .agent import root_agent
 from .audio import gemini_pcm_to_twilio_mulaw_b64, twilio_mulaw_to_gemini_pcm
 from .config import FAREWELL_PHRASES, settings
+from .elevenlabs_tts import ElevenLabsTTS
 
 log = logging.getLogger(__name__)
 
@@ -48,16 +49,21 @@ async def handle_media_stream(websocket: WebSocket) -> None:
     runner = InMemoryRunner(agent=root_agent, app_name="voice_assistant")
     live_queue = LiveRequestQueue()
 
-    run_config = RunConfig(
-        response_modalities=["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=profile["voice_name"],
+    use_elevenlabs = settings.voice_backend == "elevenlabs"
+
+    if use_elevenlabs:
+        run_config = RunConfig(response_modalities=["TEXT"])
+    else:
+        run_config = RunConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=profile["voice_name"],
+                    )
                 )
-            )
-        ),
-    )
+            ),
+        )
 
     user_id = "twilio_caller"
     session = await runner.session_service.create_session(
@@ -73,6 +79,10 @@ async def handle_media_stream(websocket: WebSocket) -> None:
         )
     )
 
+    tts: ElevenLabsTTS | None = None
+    if use_elevenlabs:
+        tts = ElevenLabsTTS()
+
     sid_holder: list[str | None] = [None]
     twilio_task = asyncio.create_task(
         _twilio_to_adk(websocket, live_queue, sid_holder, call_end_event)
@@ -87,6 +97,7 @@ async def handle_media_stream(websocket: WebSocket) -> None:
             run_config,
             sid_holder,
             call_end_event,
+            tts=tts,
         )
     )
 
@@ -225,6 +236,7 @@ async def _handle_interrupt(
     state: _CallLoopState,
     ws: WebSocket,
     sid_holder: list[str | None],
+    tts: ElevenLabsTTS | None = None,
 ) -> bool:
     """Send Twilio ``clear`` on barge-in. Returns True to skip the event."""
     if not getattr(event, "interrupted", None):
@@ -237,6 +249,8 @@ async def _handle_interrupt(
             state.interrupt_latched = True
         else:
             log.info("Caller interrupted but streamSid not available yet")
+    if tts is not None:
+        await tts.interrupt()
     state.draining = False
     return True
 
@@ -299,6 +313,62 @@ async def _relay_audio(
     return has_audio
 
 
+def _extract_text(event: Event) -> str:
+    """Extract text content from an ADK event's parts (used in text mode)."""
+    if not (event.content and event.content.parts):
+        return ""
+    return "".join(
+        part.text for part in event.content.parts if hasattr(part, "text") and part.text
+    )
+
+
+def _detect_farewell_from_text(event: Event, state: _CallLoopState) -> None:
+    """Detect farewell phrases in text content (ElevenLabs / text-mode path)."""
+    text = _extract_text(event)
+    if not text:
+        return
+    log.debug("Agent said: %s", text)
+    if not state.draining and any(fp in text.lower() for fp in FAREWELL_PHRASES):
+        log.info("Farewell phrase detected in agent text — draining")
+        state.draining = True
+
+
+async def _tts_audio_to_twilio(
+    tts: ElevenLabsTTS,
+    ws: WebSocket,
+    sid_holder: list[str | None],
+) -> None:
+    """Background task: read PCM audio from ElevenLabs and forward to Twilio."""
+    async for pcm_chunk in tts.receive_audio():
+        stream_sid = sid_holder[0]
+        if not stream_sid:
+            await asyncio.sleep(0.05)
+            stream_sid = sid_holder[0]
+        if not stream_sid:
+            log.debug("No stream SID yet, dropping ElevenLabs audio chunk")
+            continue
+
+        mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(pcm_chunk)
+        await ws.send_text(
+            json.dumps(
+                {
+                    "event": "media",
+                    "streamSid": stream_sid,
+                    "media": {"payload": mulaw_b64},
+                }
+            )
+        )
+        await ws.send_text(
+            json.dumps(
+                {
+                    "event": "mark",
+                    "streamSid": stream_sid,
+                    "mark": {"name": "tts-chunk"},
+                }
+            )
+        )
+
+
 async def _finish_drain(
     ws: WebSocket,
     sid_holder: list[str | None],
@@ -334,8 +404,10 @@ async def _adk_to_twilio(
     run_config: RunConfig,
     sid_holder: list[str | None],
     call_end_event: asyncio.Event,
+    tts: ElevenLabsTTS | None = None,
 ) -> None:
     state = _CallLoopState()
+    tts_receiver: asyncio.Task | None = None
     try:
         async for event in runner.run_live(
             user_id=user_id,
@@ -345,17 +417,47 @@ async def _adk_to_twilio(
         ):
             _process_input_transcription(event, state)
 
-            if await _handle_interrupt(event, state, ws, sid_holder):
+            if await _handle_interrupt(event, state, ws, sid_holder, tts=tts):
+                if tts_receiver and not tts_receiver.done():
+                    tts_receiver.cancel()
+                    tts_receiver = None
                 continue
             if state.interrupt_latched:
                 continue
 
-            _detect_farewell(event, state)
-            has_audio = await _relay_audio(event, ws, sid_holder)
+            if tts is not None:
+                # ElevenLabs text-mode path
+                _detect_farewell_from_text(event, state)
+                text = _extract_text(event)
+                if text:
+                    if tts._ws is None:
+                        profile = settings.language_profile()
+                        await tts.connect(
+                            voice_id=profile["elevenlabs_voice_id"],
+                            model_id=settings.elevenlabs_model_id,
+                            api_key=settings.elevenlabs_api_key,
+                        )
+                        tts_receiver = asyncio.create_task(
+                            _tts_audio_to_twilio(tts, ws, sid_holder)
+                        )
+                    await tts.send_text(text)
 
-            if state.draining and not has_audio:
-                await _finish_drain(ws, sid_holder, call_end_event)
-                break
+                if state.draining:
+                    await tts.flush()
+                    if tts_receiver:
+                        await tts_receiver
+                        tts_receiver = None
+                    await _finish_drain(ws, sid_holder, call_end_event)
+                    break
+            else:
+                # Gemini native-audio path
+                _detect_farewell(event, state)
+                has_audio = await _relay_audio(event, ws, sid_holder)
+
+                if state.draining and not has_audio:
+                    await _finish_drain(ws, sid_holder, call_end_event)
+                    break
+
             if call_end_event.is_set():
                 break
 
@@ -365,3 +467,8 @@ async def _adk_to_twilio(
         log.debug("Twilio WebSocket disconnected during send")
     except Exception as exc:
         log.error("Error in adk->twilio loop: %s", exc)
+    finally:
+        if tts is not None:
+            await tts.interrupt()
+        if tts_receiver and not tts_receiver.done():
+            tts_receiver.cancel()

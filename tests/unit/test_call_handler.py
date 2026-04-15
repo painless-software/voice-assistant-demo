@@ -11,6 +11,7 @@ import pytest
 
 from voice_assistant.call_handler import (
     _adk_to_twilio,
+    _tts_audio_to_twilio,
     _twilio_to_adk,
     _wait_for_goodbye_mark,
     handle_media_stream,
@@ -37,8 +38,13 @@ def _make_event(
     output_text: str | None = None,
     input_text: str | None = None,
     interrupted: bool | None = None,
+    text_content: str | None = None,
 ) -> SimpleNamespace:
-    """Build a fake ADK event with the requested attributes."""
+    """Build a fake ADK event with the requested attributes.
+
+    ``text_content`` adds a text part to ``content.parts`` (ElevenLabs path).
+    ``output_text`` sets ``output_transcription.text`` (Gemini audio path).
+    """
     parts = []
     if audio_data is not None:
         parts.append(
@@ -47,6 +53,8 @@ def _make_event(
                 function_call=None,
             )
         )
+    if text_content is not None:
+        parts.append(SimpleNamespace(text=text_content, inline_data=None))
     content = SimpleNamespace(parts=parts) if parts else SimpleNamespace(parts=[])
 
     output_transcription = None
@@ -189,25 +197,18 @@ async def test_twilio_goodbye_timeout():
     )
 
 
-async def test_twilio_receive_timeout_handled():
+@pytest.mark.parametrize(
+    "exc_factory",
+    [
+        lambda: asyncio.TimeoutError(),
+        lambda: RuntimeError("boom"),
+        lambda: __import__("fastapi").WebSocketDisconnect(),
+    ],
+    ids=["timeout", "generic_error", "websocket_disconnect"],
+)
+async def test_twilio_error_handling(exc_factory):
     ws = AsyncMock()
-    ws.receive_text.side_effect = asyncio.TimeoutError()
-
-    await _twilio_to_adk(ws, MagicMock(), [None], asyncio.Event())
-
-
-async def test_twilio_generic_error_handled():
-    ws = AsyncMock()
-    ws.receive_text.side_effect = RuntimeError("boom")
-
-    await _twilio_to_adk(ws, MagicMock(), [None], asyncio.Event())
-
-
-async def test_twilio_websocket_disconnect_handled():
-    from fastapi import WebSocketDisconnect
-
-    ws = AsyncMock()
-    ws.receive_text.side_effect = WebSocketDisconnect()
+    ws.receive_text.side_effect = exc_factory()
 
     await _twilio_to_adk(ws, MagicMock(), [None], asyncio.Event())
 
@@ -217,7 +218,7 @@ async def test_twilio_websocket_disconnect_handled():
 # ---------------------------------------------------------------------------
 
 
-def _run_adk(events, ws, sid_holder=None, call_end_event=None):
+def _run_adk(events, ws, sid_holder=None, call_end_event=None, tts=None):
     """Helper to call _adk_to_twilio with mocked runner."""
     runner = MagicMock()
     runner.run_live = lambda **kw: _fake_run_live(events, **kw)
@@ -230,6 +231,7 @@ def _run_adk(events, ws, sid_holder=None, call_end_event=None):
         run_config=MagicMock(),
         sid_holder=sid_holder or ["SM-1"],
         call_end_event=call_end_event or asyncio.Event(),
+        tts=tts,
     )
 
 
@@ -375,6 +377,68 @@ async def test_drain_cancel_resets_draining_state(mock_convert):
 
     # call_end_event should NOT be set — drain was cancelled
     assert not call_end_event.is_set()
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_input_transcription_without_text_is_ignored(mock_convert):
+    """An input_transcription with no text attribute does not clear drain."""
+    ws = AsyncMock()
+    call_end_event = asyncio.Event()
+    # Event has input_transcription but text is empty
+    event = SimpleNamespace(
+        content=SimpleNamespace(parts=[]),
+        output_transcription=None,
+        input_transcription=SimpleNamespace(text=""),
+        interrupted=None,
+    )
+    events = [
+        _make_event(output_text="Goodbye!", audio_data=b"\x00"),  # drain ON, has audio
+        event,  # should NOT cancel drain (empty text)
+        _make_event(),  # completes drain (no audio)
+    ]
+
+    await _run_adk(events, ws, call_end_event=call_end_event)
+
+    assert call_end_event.is_set()
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_output_transcription_without_text_is_ignored(mock_convert):
+    """An output_transcription with no text attribute does not trigger drain."""
+    ws = AsyncMock()
+    call_end_event = asyncio.Event()
+    event = SimpleNamespace(
+        content=SimpleNamespace(parts=[]),
+        output_transcription=SimpleNamespace(text=""),
+        input_transcription=None,
+        interrupted=None,
+    )
+    events = [event, _make_event()]
+
+    await _run_adk(events, ws, call_end_event=call_end_event)
+
+    assert not call_end_event.is_set()
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_relay_audio_skips_parts_without_inline_data(mock_convert):
+    """Audio relay skips text-only parts (no inline_data)."""
+    ws = AsyncMock()
+    # Event with a text part (no inline_data) — should be skipped by _relay_audio
+    events = [_make_event(text_content="just text")]
+
+    await _run_adk(events, ws)
+
+    mock_convert.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -602,33 +666,20 @@ async def test_adk_websocket_disconnect_handled():
         await _run_adk(events, ws)
 
 
-async def test_adk_generic_error_handled():
+@pytest.mark.parametrize(
+    "exc_factory",
+    [
+        lambda: RuntimeError("unexpected"),
+        lambda: asyncio.CancelledError(),
+    ],
+    ids=["generic_error", "cancelled"],
+)
+async def test_adk_runner_error_handled(exc_factory):
     ws = AsyncMock()
+    exc = exc_factory()
 
     async def _raising_gen(**kw):
-        raise RuntimeError("unexpected")
-        yield
-
-    runner = MagicMock()
-    runner.run_live = _raising_gen
-
-    await _adk_to_twilio(
-        ws=ws,
-        runner=runner,
-        user_id="u",
-        session_id="s",
-        live_queue=MagicMock(),
-        run_config=MagicMock(),
-        sid_holder=["SM-1"],
-        call_end_event=asyncio.Event(),
-    )
-
-
-async def test_adk_cancelled_error_handled():
-    ws = AsyncMock()
-
-    async def _raising_gen(**kw):
-        raise asyncio.CancelledError
+        raise exc
         yield  # make it an async generator
 
     runner = MagicMock()
@@ -745,3 +796,238 @@ async def test_handle_media_stream_one_task_finishes_other_cancelled(
     await asyncio.wait_for(handle_media_stream(ws), timeout=5.0)
 
     ws.close.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# ElevenLabs voice backend path
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_tts():
+    """Create a mock ElevenLabsTTS with pre-wired async methods."""
+    tts = MagicMock()
+    tts._ws = None  # not connected yet
+
+    async def _fake_connect(*a, **kw):
+        tts._ws = MagicMock()  # mark as connected
+
+    tts.connect = AsyncMock(side_effect=_fake_connect)
+    tts.send_text = AsyncMock()
+    tts.flush = AsyncMock()
+    tts.interrupt = AsyncMock()
+
+    async def _no_audio():
+        return
+        yield  # make it an async generator
+
+    tts.receive_audio = _no_audio
+    return tts
+
+
+@pytest.fixture()
+def _patch_elevenlabs_settings():
+    """Patch settings for ElevenLabs tests."""
+    with patch(f"{_CH}.settings") as mock_settings:
+        mock_settings.language_profile.return_value = {
+            "elevenlabs_voice_id": "voice-1",
+        }
+        mock_settings.elevenlabs_model_id = "model-1"
+        mock_settings.elevenlabs_api_key = "key-1"
+        yield mock_settings
+
+
+@pytest.mark.usefixtures("_patch_elevenlabs_settings")
+async def test_elevenlabs_text_streamed_to_tts():
+    """Text content from ADK events is forwarded to the ElevenLabs TTS client."""
+    tts = _make_mock_tts()
+    ws = AsyncMock()
+    events = [
+        _make_event(text_content="Hello "),
+        _make_event(text_content="world!"),
+    ]
+
+    await _run_adk(events, ws, tts=tts)
+
+    tts.connect.assert_awaited_once()
+    assert tts.send_text.await_count == 2
+    tts.send_text.assert_any_await("Hello ")
+    tts.send_text.assert_any_await("world!")
+
+
+@pytest.mark.usefixtures("_patch_elevenlabs_settings")
+async def test_elevenlabs_farewell_triggers_drain():
+    """Farewell phrase in text content triggers drain and flush."""
+    tts = _make_mock_tts()
+    ws = AsyncMock()
+    call_end_event = asyncio.Event()
+    events = [_make_event(text_content="Auf Wiederhören!")]
+
+    await _run_adk(events, ws, call_end_event=call_end_event, tts=tts)
+
+    assert call_end_event.is_set()
+    tts.flush.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("_patch_elevenlabs_settings")
+async def test_elevenlabs_interrupt_calls_tts_interrupt():
+    """Barge-in with ElevenLabs backend calls tts.interrupt()."""
+    tts = _make_mock_tts()
+    ws = AsyncMock()
+    events = [_make_event(interrupted=True)]
+
+    await _run_adk(events, ws, sid_holder=["SM-1"], tts=tts)
+
+    # Twilio clear was sent
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    assert any(m.get("event") == "clear" for m in sent)
+    # TTS was interrupted (at least once — once in handler, once in finally)
+    assert tts.interrupt.await_count >= 1
+
+
+@pytest.mark.usefixtures("_patch_elevenlabs_settings")
+async def test_elevenlabs_stale_text_dropped_while_latched():
+    """Text events arriving while interrupt_latched are not sent to TTS."""
+    tts = _make_mock_tts()
+    ws = AsyncMock()
+    events = [
+        _make_event(interrupted=True),
+        _make_event(text_content="stale response"),  # should be dropped
+    ]
+
+    await _run_adk(events, ws, tts=tts)
+
+    tts.send_text.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("_patch_elevenlabs_settings")
+async def test_elevenlabs_text_resumes_after_new_user_turn():
+    """After interrupt + new user turn, TTS reconnects and text flows again."""
+    tts = _make_mock_tts()
+    ws = AsyncMock()
+    events = [
+        _make_event(interrupted=True),
+        _make_event(input_text="Wait, another question"),
+        _make_event(text_content="New response"),
+    ]
+
+    await _run_adk(events, ws, tts=tts)
+
+    tts.connect.assert_awaited_once()
+    tts.send_text.assert_awaited_once_with("New response")
+
+
+@pytest.mark.usefixtures("_patch_elevenlabs_settings")
+async def test_elevenlabs_no_text_means_no_connect():
+    """If no text events arrive, TTS is never connected."""
+    tts = _make_mock_tts()
+    ws = AsyncMock()
+    events = [_make_event()]  # empty event
+
+    await _run_adk(events, ws, tts=tts)
+
+    tts.connect.assert_not_awaited()
+    tts.send_text.assert_not_awaited()
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="bXVsYXc=",
+)
+async def test_tts_audio_to_twilio_forwards_audio(mock_convert):
+    """_tts_audio_to_twilio converts PCM from TTS and sends mulaw to Twilio."""
+    tts = _make_mock_tts()
+
+    async def _yield_audio():
+        yield b"\x00\x01\x02"
+        yield b"\x03\x04"
+
+    tts.receive_audio = _yield_audio
+
+    ws = AsyncMock()
+    await _tts_audio_to_twilio(tts, ws, ["SM-1"])
+
+    assert mock_convert.call_count == 2
+    sent = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
+    media_msgs = [m for m in sent if m.get("event") == "media"]
+    assert len(media_msgs) == 2
+    assert media_msgs[0]["media"]["payload"] == "bXVsYXc="
+    assert media_msgs[0]["streamSid"] == "SM-1"
+    tts_marks = [m for m in sent if m.get("mark", {}).get("name") == "tts-chunk"]
+    assert len(tts_marks) == 2
+
+
+@patch(
+    "voice_assistant.call_handler.gemini_pcm_to_twilio_mulaw_b64",
+    return_value="x",
+)
+async def test_tts_audio_to_twilio_drops_without_sid(mock_convert):
+    """_tts_audio_to_twilio drops audio when no stream SID is available."""
+    tts = _make_mock_tts()
+
+    async def _yield_audio():
+        yield b"\x00"
+
+    tts.receive_audio = _yield_audio
+
+    ws = AsyncMock()
+    with patch("voice_assistant.call_handler.asyncio.sleep", new_callable=AsyncMock):
+        await _tts_audio_to_twilio(tts, ws, [None])
+
+    ws.send_text.assert_not_called()
+
+
+@pytest.mark.usefixtures("_patch_elevenlabs_settings")
+async def test_elevenlabs_interrupt_cancels_tts_receiver():
+    """Barge-in while TTS receiver is active cancels the receiver task."""
+    tts = _make_mock_tts()
+
+    # Make receive_audio hang so the receiver task is still running at interrupt
+    hang_event = asyncio.Event()
+
+    async def _hang_audio():
+        await hang_event.wait()
+        return
+        yield  # async generator
+
+    tts.receive_audio = _hang_audio
+
+    ws = AsyncMock()
+    events = [
+        _make_event(text_content="Hello"),
+        _make_event(interrupted=True),
+    ]
+
+    await _run_adk(events, ws, sid_holder=["SM-1"], tts=tts)
+
+    # The test completes without hanging — receiver was cancelled
+
+
+@patch(f"{_CH}._adk_to_twilio", new_callable=AsyncMock)
+@patch(f"{_CH}._twilio_to_adk", new_callable=AsyncMock)
+@patch(f"{_CH}.LiveRequestQueue")
+@patch(f"{_CH}.InMemoryRunner")
+@patch(f"{_CH}.settings")
+async def test_handle_media_stream_elevenlabs_backend(
+    mock_settings, mock_runner_cls, mock_queue_cls, mock_twilio, mock_adk
+):
+    """handle_media_stream creates ElevenLabsTTS and text RunConfig for elevenlabs."""
+    mock_settings.voice_backend = "elevenlabs"
+    mock_settings.language_profile.return_value = {"voice_name": "Leda"}
+
+    mock_runner = MagicMock()
+    mock_session = MagicMock()
+    mock_session.id = "session-1"
+    mock_runner.session_service.create_session = AsyncMock(return_value=mock_session)
+    mock_runner_cls.return_value = mock_runner
+    mock_queue_cls.return_value = MagicMock()
+
+    ws = AsyncMock()
+
+    await handle_media_stream(ws)
+
+    # _adk_to_twilio should have been called with a TTS instance
+    from voice_assistant.elevenlabs_tts import ElevenLabsTTS
+
+    call_kwargs = mock_adk.call_args[1] if mock_adk.call_args[1] else {}
+    assert "tts" in call_kwargs
+    assert isinstance(call_kwargs["tts"], ElevenLabsTTS)

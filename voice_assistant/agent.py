@@ -21,9 +21,15 @@ from .tools import ALL_TOOLS
 
 
 class _DualModelGemini(Gemini):
-    """Gemini wrapper that uses one model for text and another for live audio."""
+    """Gemini wrapper that uses one model for text and another for live audio.
 
-    live_model: str = GEMINI_LIVE_MODEL
+    When the voice backend is ElevenLabs, the live model stays on the
+    standard text model (no native audio) because TTS is handled externally.
+    """
+
+    live_model: str = (
+        GEMINI_MODEL if settings.voice_backend == "elevenlabs" else GEMINI_LIVE_MODEL
+    )
 
     @contextlib.asynccontextmanager
     async def connect(
