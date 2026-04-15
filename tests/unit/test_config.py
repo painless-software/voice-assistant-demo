@@ -128,3 +128,37 @@ def test_use_vertex_ai_false_when_api_key_set():
 def test_use_vertex_ai_true_when_only_project():
     s = Settings(google_api_key=None, google_cloud_project="proj")
     assert s.use_vertex_ai() is True
+
+
+# ---------------------------------------------------------------------------
+# ElevenLabs settings
+# ---------------------------------------------------------------------------
+
+
+def test_voice_backend_defaults_to_gemini():
+    s = Settings(google_api_key="key")
+    assert s.voice_backend == "gemini"
+
+
+def test_elevenlabs_requires_api_key():
+    s = Settings(
+        google_api_key="key", voice_backend="elevenlabs", elevenlabs_api_key=""
+    )
+    with pytest.raises(EnvironmentError, match="ELEVENLABS_API_KEY"):
+        s.validate(require_twilio=False)
+
+
+def test_elevenlabs_with_api_key_passes():
+    s = Settings(
+        google_api_key="key",
+        voice_backend="elevenlabs",
+        elevenlabs_api_key="el-key",
+    )
+    s.validate(require_twilio=False)  # should not raise
+
+
+@pytest.mark.parametrize("lang_code", ["de-CH", "de-DE", "fr-CH", "it-CH"])
+def test_language_profile_has_elevenlabs_voice_id(lang_code):
+    profile = LANGUAGE_PROFILES[lang_code]
+    assert "elevenlabs_voice_id" in profile
+    assert len(profile["elevenlabs_voice_id"]) > 0

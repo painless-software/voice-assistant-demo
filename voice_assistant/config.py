@@ -23,6 +23,7 @@ LANGUAGE_PROFILES: dict[str, dict] = {
     "de-CH": {
         "display": "Swiss German",
         "voice_name": "Leda",
+        "elevenlabs_voice_id": "onwK4e9ZLuTAKqWW03F9",  # Daniel
         "greeting": (
             "Grüezi! Sie sind mit dem Kundendienst verbunden. "
             "Wie kann ich Ihnen heute helfen?"
@@ -35,6 +36,7 @@ LANGUAGE_PROFILES: dict[str, dict] = {
     "de-DE": {
         "display": "Standard German",
         "voice_name": "Leda",
+        "elevenlabs_voice_id": "onwK4e9ZLuTAKqWW03F9",  # Daniel
         "greeting": (
             "Hallo! Sie sind mit dem Kundendienst verbunden. Wie kann ich Ihnen helfen?"
         ),
@@ -46,6 +48,7 @@ LANGUAGE_PROFILES: dict[str, dict] = {
     "fr-CH": {
         "display": "Swiss French",
         "voice_name": "Aoede",
+        "elevenlabs_voice_id": "TX3LPaxmHKxFdv7VOQHJ",  # Liam
         "greeting": (
             "Bonjour! Vous êtes en contact avec notre service clientèle. "
             "Comment puis-je vous aider aujourd'hui?"
@@ -58,6 +61,7 @@ LANGUAGE_PROFILES: dict[str, dict] = {
     "it-CH": {
         "display": "Swiss Italian",
         "voice_name": "Zephyr",
+        "elevenlabs_voice_id": "bIHbv24MWmeRgasZH58o",  # Will
         "greeting": (
             "Buongiorno! Benvenuto al servizio clienti. Come posso aiutarla oggi?"
         ),
@@ -136,6 +140,19 @@ class Settings:
         default_factory=lambda: os.getenv("DEFAULT_LANGUAGE", "de-CH")
     )
 
+    # Voice backend: "gemini" (default) or "elevenlabs"
+    voice_backend: str = field(
+        default_factory=lambda: os.getenv("VOICE_BACKEND", "gemini")
+    )
+
+    # ElevenLabs (required when voice_backend == "elevenlabs")
+    elevenlabs_api_key: str = field(
+        default_factory=lambda: os.getenv("ELEVENLABS_API_KEY", "")
+    )
+    elevenlabs_model_id: str = field(
+        default_factory=lambda: os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+    )
+
     def validate(self, *, require_twilio: bool = True) -> None:
         """Call on startup to fail early with a clear message if config is missing."""
         missing = []
@@ -148,6 +165,8 @@ class Settings:
                 missing.append("TWILIO_PHONE_NUMBER")
         if not self.google_api_key and not self.google_cloud_project:
             missing.append("GOOGLE_API_KEY (or GOOGLE_CLOUD_PROJECT for Vertex AI)")
+        if self.voice_backend == "elevenlabs" and not self.elevenlabs_api_key:
+            missing.append("ELEVENLABS_API_KEY")
         if missing:
             raise EnvironmentError(
                 "Missing required environment variables:\n  "
