@@ -806,10 +806,10 @@ async def test_handle_media_stream_one_task_finishes_other_cancelled(
 def _make_mock_tts():
     """Create a mock ElevenLabsTTS with pre-wired async methods."""
     tts = MagicMock()
-    tts._ws = None  # not connected yet
+    tts.is_connected = False
 
     async def _fake_connect(*a, **kw):
-        tts._ws = MagicMock()  # mark as connected
+        tts.is_connected = True
 
     tts.connect = AsyncMock(side_effect=_fake_connect)
     tts.send_text = AsyncMock()

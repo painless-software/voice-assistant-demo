@@ -153,8 +153,15 @@ class Settings:
         default_factory=lambda: os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
     )
 
+    _VALID_VOICE_BACKENDS = {"gemini", "elevenlabs"}
+
     def validate(self, *, require_twilio: bool = True) -> None:
         """Call on startup to fail early with a clear message if config is missing."""
+        if self.voice_backend not in self._VALID_VOICE_BACKENDS:
+            raise EnvironmentError(
+                f"VOICE_BACKEND={self.voice_backend!r} is not valid. "
+                f"Choose one of: {', '.join(sorted(self._VALID_VOICE_BACKENDS))}"
+            )
         missing = []
         if require_twilio:
             if not self.twilio_account_sid:

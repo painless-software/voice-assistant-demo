@@ -140,6 +140,12 @@ def test_voice_backend_defaults_to_gemini():
     assert s.voice_backend == "gemini"
 
 
+def test_invalid_voice_backend_raises():
+    s = Settings(google_api_key="key", voice_backend="elevenlab")
+    with pytest.raises(EnvironmentError, match="not valid"):
+        s.validate(require_twilio=False)
+
+
 def test_elevenlabs_requires_api_key():
     s = Settings(
         google_api_key="key", voice_backend="elevenlabs", elevenlabs_api_key=""

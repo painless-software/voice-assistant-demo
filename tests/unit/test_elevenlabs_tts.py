@@ -168,6 +168,7 @@ async def test_receive_audio_handles_connection_closed():
 
     received = [c async for c in tts.receive_audio()]
     assert received == []
+    assert not tts.is_connected
 
 
 @patch("voice_assistant.elevenlabs_tts.websockets.connect", new_callable=AsyncMock)
