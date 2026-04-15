@@ -430,7 +430,7 @@ async def _adk_to_twilio(
                 _detect_farewell_from_text(event, state)
                 text = _extract_text(event)
                 if text:
-                    if tts._ws is None:
+                    if not tts.is_connected:
                         profile = settings.language_profile()
                         await tts.connect(
                             voice_id=profile["elevenlabs_voice_id"],

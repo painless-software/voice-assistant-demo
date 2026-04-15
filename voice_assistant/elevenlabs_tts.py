@@ -40,6 +40,10 @@ class ElevenLabsTTS:
     def __init__(self) -> None:
         self._ws: websockets.ClientConnection | None = None
 
+    @property
+    def is_connected(self) -> bool:
+        return self._ws is not None
+
     async def connect(
         self,
         voice_id: str,
@@ -87,6 +91,7 @@ class ElevenLabsTTS:
                 if audio_b64:
                     yield base64.b64decode(audio_b64)
         except websockets.ConnectionClosed:
+            self._ws = None
             log.debug("ElevenLabs WebSocket closed during receive")
 
     async def interrupt(self) -> None:
