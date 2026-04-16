@@ -8,11 +8,15 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 
 load_dotenv()
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+_PERSONAS_DIR = Path(__file__).parent / "personas"
+
+_PERSONA_REQUIRED_FIELDS = ("name", "allowed_topics", "out_of_scope_decline")
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +111,106 @@ SYSTEM_INSTRUCTION_TEMPLATE = (_PROMPTS_DIR / "base.txt").read_text()
 _ESCALATION_PROMPT = (_PROMPTS_DIR / "escalation.txt").read_text()
 
 
+# ---------------------------------------------------------------------------
+# Persona loading
+# ---------------------------------------------------------------------------
+
+
+def _load_persona(name: str) -> dict:
+    """Load and validate a persona YAML file by name."""
+    path = _PERSONAS_DIR / f"{name}.yaml"
+    if not path.exists():
+        raise EnvironmentError(
+            f"Persona file not found: {path}\n"
+            f"Set PERSONA to a valid persona name "
+            f"(available: {', '.join(p.stem for p in _PERSONAS_DIR.glob('*.yaml'))})"
+        )
+    data = yaml.safe_load(path.read_text())
+    if not isinstance(data, dict):
+        raise EnvironmentError(
+            f"Persona '{name}' must be a YAML mapping with fields: "
+            f"{', '.join(_PERSONA_REQUIRED_FIELDS)}"
+        )
+    missing = [f for f in _PERSONA_REQUIRED_FIELDS if f not in data]
+    if missing:
+        raise EnvironmentError(
+            f"Persona '{name}' is missing required fields: {', '.join(missing)}"
+        )
+    return data
+
+
+def _render_persona_block(persona: dict) -> str:
+    """Render persona data into a prompt section."""
+    topics = "\n".join(f"- {t}" for t in persona["allowed_topics"])
+
+    facts_lines = []
+    for key, value in persona.get("business_facts", {}).items():
+        label = key.replace("_", " ").title()
+        if isinstance(value, list):
+            facts_lines.append(f"- {label}: {', '.join(value)}")
+        else:
+            facts_lines.append(f"- {label}: {value}")
+    facts = "\n".join(facts_lines) if facts_lines else "No additional facts available."
+
+    decline = persona["out_of_scope_decline"].strip()
+
+    return (
+        f"You are a friendly and professional representative for "
+        f"{persona['name']}.\n"
+        f"{persona.get('tagline', '')}\n"
+        f"Located at: {persona.get('location', 'N/A')}\n"
+        f"\n"
+        f"YOUR EXPERTISE:\n{topics}\n"
+        f"\n"
+        f"BUSINESS INFORMATION:\n{facts}\n"
+        f"\n"
+        f"SCOPE RULES:\n"
+        f"- If the customer asks about something NOT listed under YOUR EXPERTISE, "
+        f"respond approximately like this:\n"
+        f'  "{decline}"\n'
+        f"- If the customer asks about something in your expertise but you lack "
+        f"specific data (e.g. current stock, exact pricing for a model), say so "
+        f"honestly and offer to take a note or connect them with a colleague.\n"
+        f"- NEVER pretend to look things up or claim capabilities you do not have."
+    )
+
+
+def load_all_personas() -> dict[str, dict]:
+    """Load and validate all persona YAML files from the personas directory."""
+    personas = {}
+    for path in sorted(_PERSONAS_DIR.glob("*.yaml")):
+        personas[path.stem] = _load_persona(path.stem)
+    return personas
+
+
+def build_instruction_for_persona(persona: dict, lang_code: str | None = None) -> str:
+    """Build the full system instruction for a specific persona and language."""
+    lang = lang_code or settings.default_language
+    profile = LANGUAGE_PROFILES.get(lang, LANGUAGE_PROFILES[settings.default_language])
+    block = _render_persona_block(persona)
+    base = SYSTEM_INSTRUCTION_TEMPLATE.format(
+        persona_block=block,
+        language_display=profile["display"],
+    )
+    return f"{base}\n\n{_ESCALATION_PROMPT}"
+
+
+def _default_persona_name() -> str:
+    """Return PERSONA env var, or the first available persona file."""
+    name = os.getenv("PERSONA", "")
+    if name:
+        return name
+    available = sorted(p.stem for p in _PERSONAS_DIR.glob("*.yaml"))
+    if available:
+        return available[0]
+    return ""
+
+
+_PERSONA_NAME = _default_persona_name()
+PERSONA: dict = _load_persona(_PERSONA_NAME) if _PERSONA_NAME else {}
+PERSONA_BLOCK: str = _render_persona_block(PERSONA) if PERSONA else ""
+
+
 @dataclass
 class Settings:
     # Twilio – required at runtime, read lazily so imports work without .env
@@ -153,6 +257,9 @@ class Settings:
         default_factory=lambda: os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
     )
 
+    # Persona
+    persona: str = field(default_factory=lambda: os.getenv("PERSONA", ""))
+
     _VALID_VOICE_BACKENDS = {"gemini", "elevenlabs"}
 
     def validate(self, *, require_twilio: bool = True) -> None:
@@ -187,11 +294,18 @@ class Settings:
 
     def language_profile(self, lang_code: str | None = None) -> dict:
         code = lang_code or self.default_language
-        return LANGUAGE_PROFILES.get(code, LANGUAGE_PROFILES[self.default_language])
+        profile = LANGUAGE_PROFILES.get(code, LANGUAGE_PROFILES[self.default_language])
+        persona_greeting = PERSONA.get("greetings", {}).get(code)
+        if persona_greeting:
+            profile = {**profile, "greeting": persona_greeting.strip()}
+        return profile
 
     def system_instruction(self, lang_code: str | None = None) -> str:
         profile = self.language_profile(lang_code)
-        base = SYSTEM_INSTRUCTION_TEMPLATE.format(language_display=profile["display"])
+        base = SYSTEM_INSTRUCTION_TEMPLATE.format(
+            persona_block=PERSONA_BLOCK,
+            language_display=profile["display"],
+        )
         return f"{base}\n\n{_ESCALATION_PROMPT}"
 
 
