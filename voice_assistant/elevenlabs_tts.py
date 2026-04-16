@@ -10,6 +10,7 @@ works unchanged.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -21,6 +22,8 @@ log = logging.getLogger(__name__)
 
 _BASE_URL = "wss://api.elevenlabs.io/v1/text-to-speech"
 _OUTPUT_FORMAT = "pcm_24000"
+# Max seconds to wait for the ElevenLabs WebSocket handshake before giving up.
+_CONNECT_TIMEOUT = 5.0
 
 
 class ElevenLabsTTS:
@@ -55,8 +58,9 @@ class ElevenLabsTTS:
             f"{_BASE_URL}/{voice_id}/stream-input"
             f"?model_id={model_id}&output_format={_OUTPUT_FORMAT}"
         )
-        self._ws = await websockets.connect(
-            url, additional_headers={"xi-api-key": api_key}
+        self._ws = await asyncio.wait_for(
+            websockets.connect(url, additional_headers={"xi-api-key": api_key}),
+            timeout=_CONNECT_TIMEOUT,
         )
         bos = {
             "text": " ",
@@ -91,8 +95,12 @@ class ElevenLabsTTS:
                 if audio_b64:
                     yield base64.b64decode(audio_b64)
         except websockets.ConnectionClosed:
-            self._ws = None
             log.debug("ElevenLabs WebSocket closed during receive")
+        finally:
+            # Always clear _ws on exit so a broken socket (e.g. malformed
+            # JSON from the server) doesn't leave subsequent send_text()
+            # writing to a dead connection.
+            self._ws = None
 
     async def interrupt(self) -> None:
         """Abort the current TTS session (used for barge-in)."""
@@ -100,8 +108,8 @@ class ElevenLabsTTS:
             return
         try:
             await self._ws.close()
-        except Exception:
-            pass
+        except websockets.WebSocketException as exc:
+            log.debug("ElevenLabs WebSocket close raised %s", exc)
         finally:
             self._ws = None
             log.debug("ElevenLabs TTS session interrupted")

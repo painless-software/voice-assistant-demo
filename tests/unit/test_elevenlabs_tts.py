@@ -30,6 +30,25 @@ def _final_msg() -> str:
 # ---------------------------------------------------------------------------
 
 
+async def test_connect_times_out_when_unreachable():
+    """connect() raises TimeoutError instead of hanging if ElevenLabs is unreachable."""
+    import asyncio
+
+    async def _never_connect(*a, **kw):
+        await asyncio.sleep(10)
+
+    tts = ElevenLabsTTS()
+    with patch("voice_assistant.elevenlabs_tts._CONNECT_TIMEOUT", 0.01):
+        with patch(
+            "voice_assistant.elevenlabs_tts.websockets.connect",
+            side_effect=_never_connect,
+        ):
+            with pytest.raises(asyncio.TimeoutError):
+                await tts.connect("v", "m", "k")
+
+    assert not tts.is_connected
+
+
 @patch("voice_assistant.elevenlabs_tts.websockets.connect", new_callable=AsyncMock)
 async def test_connect_sends_bos(mock_connect):
     ws = AsyncMock()
@@ -171,10 +190,30 @@ async def test_receive_audio_handles_connection_closed():
     assert not tts.is_connected
 
 
+async def test_receive_audio_clears_ws_on_unexpected_error():
+    """A non-ConnectionClosed error (e.g. malformed JSON) still clears _ws
+    so subsequent send_text() doesn't write to a dead socket."""
+    ws = AsyncMock()
+    ws.__aiter__ = lambda self: self
+    ws.__anext__ = AsyncMock(return_value="not-valid-json{")
+
+    tts = ElevenLabsTTS()
+    tts._ws = ws
+
+    with pytest.raises(json.JSONDecodeError):
+        async for _ in tts.receive_audio():
+            pass
+
+    assert not tts.is_connected
+
+
 @patch("voice_assistant.elevenlabs_tts.websockets.connect", new_callable=AsyncMock)
 async def test_interrupt_handles_close_error(mock_connect):
+    """A close() failure from the underlying websocket is logged, not raised."""
+    import websockets
+
     ws = AsyncMock()
-    ws.close.side_effect = RuntimeError("already closed")
+    ws.close.side_effect = websockets.InvalidState("already closed")
     mock_connect.return_value = ws
 
     tts = ElevenLabsTTS()
