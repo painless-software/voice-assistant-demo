@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from voice_assistant.agent import _DualModelGemini, _instruction_provider, root_agent
-from voice_assistant.config import GEMINI_MODEL, GEMINI_LIVE_MODEL
+from voice_assistant.agent import _DualModelGemini, _make_instruction_provider, root_agent
+from voice_assistant.config import GEMINI_MODEL, GEMINI_LIVE_MODEL, PERSONA
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +18,8 @@ def test_root_agent_exists():
 
 
 def test_root_agent_name():
-    assert root_agent.name == "customer_service"
+    # Agent name derived from active persona
+    assert root_agent.name == "velo_zueri"
 
 
 def test_root_agent_has_no_tools_for_native_audio():
@@ -49,24 +50,27 @@ def test_dual_model_is_gemini_subclass():
 
 
 def test_instruction_provider_uses_language_from_state():
+    provider = _make_instruction_provider(PERSONA)
     ctx = MagicMock()
     ctx.state = {"language": "fr-CH"}
-    instruction = _instruction_provider(ctx)
+    instruction = provider(ctx)
     assert "Swiss French" in instruction
 
 
 def test_instruction_provider_defaults_to_configured_language():
+    provider = _make_instruction_provider(PERSONA)
     ctx = MagicMock()
     ctx.state = {}
-    instruction = _instruction_provider(ctx)
+    instruction = provider(ctx)
     # Should use default language from settings
     assert len(instruction) > 100
 
 
 def test_instruction_provider_italian():
+    provider = _make_instruction_provider(PERSONA)
     ctx = MagicMock()
     ctx.state = {"language": "it-CH"}
-    instruction = _instruction_provider(ctx)
+    instruction = provider(ctx)
     assert "Swiss Italian" in instruction
 
 
