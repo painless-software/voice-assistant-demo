@@ -16,6 +16,7 @@ from voice_assistant.call_handler import (
     _wait_for_goodbye_mark,
     handle_media_stream,
 )
+from voice_assistant.elevenlabs_tts import ElevenLabsTTS
 
 # Patch paths for call_handler module
 _CH = "voice_assistant.call_handler"
@@ -804,22 +805,25 @@ async def test_handle_media_stream_one_task_finishes_other_cancelled(
 
 
 def _make_mock_tts():
-    """Create a mock ElevenLabsTTS with pre-wired async methods."""
-    tts = MagicMock()
+    """Create a mock ElevenLabsTTS with pre-wired async methods.
+
+    Uses ``spec=ElevenLabsTTS`` so the mock fails loudly if the client
+    interface drifts (new method added, existing method renamed).
+    """
+    tts = AsyncMock(spec=ElevenLabsTTS)
     tts.is_connected = False
 
     async def _fake_connect(*a, **kw):
         tts.is_connected = True
 
-    tts.connect = AsyncMock(side_effect=_fake_connect)
-    tts.send_text = AsyncMock()
-    tts.flush = AsyncMock()
-    tts.interrupt = AsyncMock()
+    tts.connect.side_effect = _fake_connect
 
     async def _no_audio():
         return
         yield  # make it an async generator
 
+    # ``receive_audio`` must be a callable returning an async generator,
+    # not an AsyncMock (which would be a coroutine).
     tts.receive_audio = _no_audio
     return tts
 
@@ -952,8 +956,8 @@ async def test_tts_audio_to_twilio_forwards_audio(mock_convert):
     assert len(media_msgs) == 2
     assert media_msgs[0]["media"]["payload"] == "bXVsYXc="
     assert media_msgs[0]["streamSid"] == "SM-1"
-    tts_marks = [m for m in sent if m.get("mark", {}).get("name") == "tts-chunk"]
-    assert len(tts_marks) == 2
+    # TTS chunks deliberately carry no mark (no consumer for it).
+    assert not any(m.get("event") == "mark" for m in sent)
 
 
 @patch(
@@ -1002,17 +1006,26 @@ async def test_elevenlabs_interrupt_cancels_tts_receiver():
     # The test completes without hanging — receiver was cancelled
 
 
+@patch(f"{_CH}.ElevenLabsTTS")
 @patch(f"{_CH}._adk_to_twilio", new_callable=AsyncMock)
 @patch(f"{_CH}._twilio_to_adk", new_callable=AsyncMock)
 @patch(f"{_CH}.LiveRequestQueue")
 @patch(f"{_CH}.InMemoryRunner")
 @patch(f"{_CH}.settings")
 async def test_handle_media_stream_elevenlabs_backend(
-    mock_settings, mock_runner_cls, mock_queue_cls, mock_twilio, mock_adk
+    mock_settings, mock_runner_cls, mock_queue_cls, mock_twilio, mock_adk, mock_tts_cls
 ):
     """handle_media_stream creates ElevenLabsTTS and text RunConfig for elevenlabs."""
     mock_settings.voice_backend = "elevenlabs"
-    mock_settings.language_profile.return_value = {"voice_name": "Leda"}
+    mock_settings.language_profile.return_value = {
+        "voice_name": "Leda",
+        "elevenlabs_voice_id": "voice-1",
+    }
+    mock_settings.elevenlabs_model_id = "model-1"
+    mock_settings.elevenlabs_api_key = "key-1"
+
+    mock_tts = _make_mock_tts()
+    mock_tts_cls.return_value = mock_tts
 
     mock_runner = MagicMock()
     mock_session = MagicMock()
@@ -1025,9 +1038,10 @@ async def test_handle_media_stream_elevenlabs_backend(
 
     await handle_media_stream(ws)
 
-    # _adk_to_twilio should have been called with a TTS instance
-    from voice_assistant.elevenlabs_tts import ElevenLabsTTS
-
+    # TTS instance passed to _adk_to_twilio is the same one we pre-connected
     call_kwargs = mock_adk.call_args[1] if mock_adk.call_args[1] else {}
-    assert "tts" in call_kwargs
-    assert isinstance(call_kwargs["tts"], ElevenLabsTTS)
+    assert call_kwargs.get("tts") is mock_tts
+    # Handshake happens eagerly in handle_media_stream (not lazily in adk loop)
+    mock_tts.connect.assert_awaited_once_with(
+        voice_id="voice-1", model_id="model-1", api_key="key-1"
+    )

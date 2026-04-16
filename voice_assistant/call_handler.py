@@ -82,6 +82,14 @@ async def handle_media_stream(websocket: WebSocket) -> None:
     tts: ElevenLabsTTS | None = None
     if use_elevenlabs:
         tts = ElevenLabsTTS()
+        # Eagerly open the ElevenLabs WebSocket so the TLS+WS handshake
+        # completes concurrently with ADK session setup rather than blocking
+        # the first audio chunk.
+        await tts.connect(
+            voice_id=profile["elevenlabs_voice_id"],
+            model_id=settings.elevenlabs_model_id,
+            api_key=settings.elevenlabs_api_key,
+        )
 
     sid_holder: list[str | None] = [None]
     twilio_task = asyncio.create_task(
@@ -249,25 +257,74 @@ async def _handle_interrupt(
             state.interrupt_latched = True
         else:
             log.info("Caller interrupted but streamSid not available yet")
-    if tts is not None:
-        await tts.interrupt()
+        # Only tear down the TTS session on the leading-edge interrupt;
+        # repeat "interrupted" events within the same barge-in window
+        # should not re-close an already-closed socket.
+        if tts is not None:
+            await tts.interrupt()
     state.draining = False
     return True
 
 
-def _detect_farewell(event: Event, state: _CallLoopState) -> None:
-    """Detect farewell phrases in agent output to trigger drain."""
-    if not (hasattr(event, "output_transcription") and event.output_transcription):
+def _mark_draining_if_farewell(text: str, state: _CallLoopState) -> None:
+    """Set ``state.draining`` when ``text`` contains a farewell phrase."""
+    if not text:
         return
-    if not (
-        hasattr(event.output_transcription, "text") and event.output_transcription.text
-    ):
-        return
-    text = event.output_transcription.text
     log.debug("Agent said: %s", text)
     if not state.draining and any(fp in text.lower() for fp in FAREWELL_PHRASES):
         log.info("Farewell phrase detected in agent speech — draining")
         state.draining = True
+
+
+def _detect_farewell(event: Event, state: _CallLoopState) -> None:
+    """Detect farewell phrases in the Gemini audio-mode output transcription."""
+    transcription = getattr(event, "output_transcription", None)
+    text = getattr(transcription, "text", None) if transcription else None
+    if text:
+        _mark_draining_if_farewell(text, state)
+
+
+def _detect_farewell_from_text(event: Event, state: _CallLoopState) -> None:
+    """Detect farewell phrases in text-mode content (ElevenLabs path)."""
+    _mark_draining_if_farewell(_extract_text(event), state)
+
+
+async def _send_pcm_chunk(
+    ws: WebSocket,
+    sid_holder: list[str | None],
+    pcm: bytes,
+    mark_name: str | None = None,
+) -> bool:
+    """Forward one PCM chunk to Twilio as mulaw. Returns True if sent."""
+    stream_sid = sid_holder[0]
+    if not stream_sid:
+        await asyncio.sleep(0.05)
+        stream_sid = sid_holder[0]
+    if not stream_sid:
+        log.debug("No stream SID yet, dropping audio chunk")
+        return False
+
+    mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(pcm)
+    await ws.send_text(
+        json.dumps(
+            {
+                "event": "media",
+                "streamSid": stream_sid,
+                "media": {"payload": mulaw_b64},
+            }
+        )
+    )
+    if mark_name:
+        await ws.send_text(
+            json.dumps(
+                {
+                    "event": "mark",
+                    "streamSid": stream_sid,
+                    "mark": {"name": mark_name},
+                }
+            )
+        )
+    return True
 
 
 async def _relay_audio(
@@ -282,34 +339,10 @@ async def _relay_audio(
     for part in event.content.parts:
         if not (part.inline_data and part.inline_data.data):
             continue
-        stream_sid = sid_holder[0]
-        if not stream_sid:
-            await asyncio.sleep(0.05)
-            stream_sid = sid_holder[0]
-        if not stream_sid:
-            log.debug("No stream SID yet, dropping audio chunk")
-            continue
-
-        has_audio = True
-        mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(part.inline_data.data)
-        await ws.send_text(
-            json.dumps(
-                {
-                    "event": "media",
-                    "streamSid": stream_sid,
-                    "media": {"payload": mulaw_b64},
-                }
-            )
-        )
-        await ws.send_text(
-            json.dumps(
-                {
-                    "event": "mark",
-                    "streamSid": stream_sid,
-                    "mark": {"name": "adk-chunk"},
-                }
-            )
-        )
+        if await _send_pcm_chunk(
+            ws, sid_holder, part.inline_data.data, mark_name="adk-chunk"
+        ):
+            has_audio = True
     return has_audio
 
 
@@ -317,20 +350,7 @@ def _extract_text(event: Event) -> str:
     """Extract text content from an ADK event's parts (used in text mode)."""
     if not (event.content and event.content.parts):
         return ""
-    return "".join(
-        part.text for part in event.content.parts if hasattr(part, "text") and part.text
-    )
-
-
-def _detect_farewell_from_text(event: Event, state: _CallLoopState) -> None:
-    """Detect farewell phrases in text content (ElevenLabs / text-mode path)."""
-    text = _extract_text(event)
-    if not text:
-        return
-    log.debug("Agent said: %s", text)
-    if not state.draining and any(fp in text.lower() for fp in FAREWELL_PHRASES):
-        log.info("Farewell phrase detected in agent text — draining")
-        state.draining = True
+    return "".join(part.text for part in event.content.parts if part.text)
 
 
 async def _tts_audio_to_twilio(
@@ -340,33 +360,9 @@ async def _tts_audio_to_twilio(
 ) -> None:
     """Background task: read PCM audio from ElevenLabs and forward to Twilio."""
     async for pcm_chunk in tts.receive_audio():
-        stream_sid = sid_holder[0]
-        if not stream_sid:
-            await asyncio.sleep(0.05)
-            stream_sid = sid_holder[0]
-        if not stream_sid:
-            log.debug("No stream SID yet, dropping ElevenLabs audio chunk")
-            continue
-
-        mulaw_b64 = gemini_pcm_to_twilio_mulaw_b64(pcm_chunk)
-        await ws.send_text(
-            json.dumps(
-                {
-                    "event": "media",
-                    "streamSid": stream_sid,
-                    "media": {"payload": mulaw_b64},
-                }
-            )
-        )
-        await ws.send_text(
-            json.dumps(
-                {
-                    "event": "mark",
-                    "streamSid": stream_sid,
-                    "mark": {"name": "tts-chunk"},
-                }
-            )
-        )
+        # No mark on TTS chunks — unlike the goodbye-done mark, these have
+        # no consumer and Twilio echoes them back as noise events.
+        await _send_pcm_chunk(ws, sid_holder, pcm_chunk)
 
 
 async def _finish_drain(
@@ -418,9 +414,8 @@ async def _adk_to_twilio(
             _process_input_transcription(event, state)
 
             if await _handle_interrupt(event, state, ws, sid_holder, tts=tts):
-                if tts_receiver and not tts_receiver.done():
-                    tts_receiver.cancel()
-                    tts_receiver = None
+                await _cancel_tts_receiver(tts_receiver)
+                tts_receiver = None
                 continue
             if state.interrupt_latched:
                 continue
@@ -430,6 +425,7 @@ async def _adk_to_twilio(
                 _detect_farewell_from_text(event, state)
                 text = _extract_text(event)
                 if text:
+                    # Reconnect after a prior barge-in closed the socket.
                     if not tts.is_connected:
                         profile = settings.language_profile()
                         await tts.connect(
@@ -437,6 +433,10 @@ async def _adk_to_twilio(
                             model_id=settings.elevenlabs_model_id,
                             api_key=settings.elevenlabs_api_key,
                         )
+                    # Receiver is (re)started once per TTS session —
+                    # either on the very first text chunk of the call, or
+                    # after a post-interrupt reconnect.
+                    if tts_receiver is None or tts_receiver.done():
                         tts_receiver = asyncio.create_task(
                             _tts_audio_to_twilio(tts, ws, sid_holder)
                         )
@@ -470,5 +470,17 @@ async def _adk_to_twilio(
     finally:
         if tts is not None:
             await tts.interrupt()
-        if tts_receiver and not tts_receiver.done():
-            tts_receiver.cancel()
+        await _cancel_tts_receiver(tts_receiver)
+
+
+async def _cancel_tts_receiver(task: asyncio.Task | None) -> None:
+    """Cancel a TTS receiver task and wait for it to fully unwind.
+
+    Awaiting the cancellation prevents one final ``ws.send_text`` from
+    firing after a Twilio ``clear`` (audible bleed on barge-in) and
+    prevents zombie tasks from piling up under load.
+    """
+    if task is None or task.done():
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
