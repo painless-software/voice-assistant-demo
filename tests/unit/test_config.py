@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+import voice_assistant
 from voice_assistant.config import (
     FAREWELL_PHRASES,
     LANGUAGE_PROFILES,
@@ -168,3 +171,16 @@ def test_language_profile_has_elevenlabs_voice_id(lang_code):
     profile = LANGUAGE_PROFILES[lang_code]
     assert "elevenlabs_voice_id" in profile
     assert len(profile["elevenlabs_voice_id"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Package data files
+# ---------------------------------------------------------------------------
+
+
+def test_package_data_files_are_present():
+    """Verify non-Python data files are shipped with the package."""
+    pkg = Path(voice_assistant.__file__).parent
+    assert (pkg / "prompts" / "base.txt").is_file()
+    assert (pkg / "prompts" / "escalation.txt").is_file()
+    assert list((pkg / "personas").glob("*.yaml"))

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+from unittest.mock import patch
+
 from voice_assistant.config import (
     PERSONA,
     PERSONA_BLOCK,
+    _default_persona_name,
     _load_persona,
     _render_persona_block,
     build_instruction,
@@ -159,8 +162,27 @@ def test_load_all_personas():
     assert personas["velo_shop"]["name"] == "Velo Züri"
 
 
-def test_default_persona_name_picks_first_available():
-    from voice_assistant.config import _default_persona_name
-
+def test_default_persona_name_picks_first_available(monkeypatch):
+    monkeypatch.delenv("PERSONA", raising=False)
     name = _default_persona_name()
     assert name == "velo_shop"
+
+
+def test_default_persona_name_returns_empty_when_no_files(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERSONA", raising=False)
+    with patch("voice_assistant.config._PERSONAS_DIR", tmp_path):
+        assert _default_persona_name() == ""
+
+
+def test_load_persona_invalid_yaml(tmp_path):
+    (tmp_path / "bad.yaml").write_text("just a string")
+    with patch("voice_assistant.config._PERSONAS_DIR", tmp_path):
+        with pytest.raises(EnvironmentError, match="YAML mapping"):
+            _load_persona("bad")
+
+
+def test_load_persona_missing_required_fields(tmp_path):
+    (tmp_path / "incomplete.yaml").write_text("name: Test\n")
+    with patch("voice_assistant.config._PERSONAS_DIR", tmp_path):
+        with pytest.raises(EnvironmentError, match="missing required fields"):
+            _load_persona("incomplete")

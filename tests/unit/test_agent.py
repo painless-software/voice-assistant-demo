@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from voice_assistant.agent import _DualModelGemini, _make_instruction_provider, root_agent
+import pytest
+
+from voice_assistant.agent import (
+    _DualModelGemini,
+    _make_instruction_provider,
+    root_agent,
+)
 from voice_assistant.config import GEMINI_MODEL, GEMINI_LIVE_MODEL, PERSONA
 
 
@@ -102,3 +109,40 @@ async def test_dual_model_connect_swaps_model():
 
     # After exiting, model should be restored
     assert llm_request.model == GEMINI_MODEL
+
+
+# ---------------------------------------------------------------------------
+# Module-level agent wiring
+# ---------------------------------------------------------------------------
+
+
+def test_no_personas_raises():
+    import voice_assistant.agent as agent_mod
+
+    with patch("voice_assistant.config.load_all_personas", return_value={}):
+        with pytest.raises(EnvironmentError, match="No persona YAML files"):
+            importlib.reload(agent_mod)
+
+    # Restore module to working state
+    importlib.reload(agent_mod)
+
+
+def test_multiple_personas_creates_router():
+    import voice_assistant.agent as agent_mod
+
+    second_persona = {
+        "name": "Test Shop",
+        "allowed_topics": ["Topic A"],
+        "out_of_scope_decline": "Sorry.",
+    }
+    two_personas = {
+        "velo_shop": PERSONA,
+        "test_shop": second_persona,
+    }
+    with patch("voice_assistant.config.load_all_personas", return_value=two_personas):
+        importlib.reload(agent_mod)
+        assert agent_mod.root_agent.name == "voice_assistant"
+        assert len(agent_mod.root_agent.sub_agents) == 2
+
+    # Restore module to working state
+    importlib.reload(agent_mod)
