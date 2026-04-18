@@ -282,7 +282,7 @@ fmt:
 # Clean up Python bytecode, test and build artifacts
 [group('lifecycle')]
 clean *args:
-    uvx pyclean . -d all {{ args }}
+    uvx pyclean . -i .direnv -d all {{ args }}
 
 # ── Operations ────────────────────────────────────────────────────────────────
 
